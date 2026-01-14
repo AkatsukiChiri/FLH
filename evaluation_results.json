@@ -1,0 +1,9 @@
+{
+  "wikitext2": {
+    "perplexity": 191786.85530939276,
+    "loss": 12.16413990576384,
+    "eval_time_seconds": 29.291926622390747,
+    "num_samples": 142,
+    "seq_length": 2048
+  }
+}
