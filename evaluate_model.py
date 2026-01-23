@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import gc
 import json
 import math
 import time
@@ -23,49 +24,118 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoConfig
 
-from flh.quantized_model.modeling_llama import FLH_FP16LlamaForCausalLM
+from flh.quantized_model.modeling_llama import FLH_FP16LlamaForCausalLM, FLH_LlamaForCausalLM
 
 
-def load_model_and_tokenizer(model_name_or_path, device="cuda", dtype=torch.float16, attn_implementation="flash_attention_2"):
-    """Load model and tokenizer"""
+def load_original_model(model_name_or_path, device="cuda", dtype=torch.float16, attn_implementation="flash_attention_2"):
+    """Load original LlamaForCausalLM model"""
+    print(f"Loading original LlamaForCausalLM from {model_name_or_path}...")
+    from transformers import LlamaForCausalLM
+    
+    dtype_old = torch.get_default_dtype()
+    torch.set_default_dtype(torch.float16)
+    
+    model = LlamaForCausalLM.from_pretrained(
+        model_name_or_path,
+        torch_dtype=torch.float16,
+        attn_implementation=attn_implementation,
+        device_map=device
+    )
+    
+    torch.set_default_dtype(dtype_old)
+    model = model.half().to(device=device)
+    model.eval()
+    
+    print("✓ Original model loaded successfully")
+    return model
+
+
+def load_model_and_tokenizer(model_name_or_path, device="cuda", dtype=torch.float16, attn_implementation="flash_attention_2", use_quantized=False, load_quantized_path=None, save_quantized_path=None, weight_sym=False, act_sym=True):
+    """Load model and tokenizer
+    
+    Args:
+        model_name_or_path: Path to original model
+        device: Target device
+        dtype: Data type
+        attn_implementation: Attention implementation
+        use_quantized: Whether to use quantized model
+        load_quantized_path: Path to pre-quantized model (fast loading)
+        save_quantized_path: Path to save quantized model after quantization
+    """
+    # 如果指定了加载路径，直接加载已量化的模型（快速）
+    if load_quantized_path:
+        print(f"Loading pre-quantized model from {load_quantized_path}...")
+        model = FLH_LlamaForCausalLM.load_quantized(load_quantized_path, target_device=device)
+        tokenizer = AutoTokenizer.from_pretrained(load_quantized_path)
+        model.eval()
+        print("✓ Pre-quantized model loaded successfully (fast!)")
+        return model, tokenizer
+    
+    # 否则，从原始模型加载
     print(f"Loading model from {model_name_or_path}...")
     
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
-    
-    # Load base config and create FLH model
-    config = AutoConfig.from_pretrained(model_name_or_path)
-    
-    # Set attention implementation
-    config._attn_implementation = attn_implementation
     
     # Note: FLH_FP16LlamaForCausalLM requires flash_attention_2
     if attn_implementation != "flash_attention_2":
         print(f"⚠ Warning: FLH_FP16LlamaForCausalLM requires flash_attention_2, but {attn_implementation} was specified.")
         print(f"  Forcing flash_attention_2...")
-        config._attn_implementation = "flash_attention_2"
+        attn_implementation = "flash_attention_2"
     
-    # Create model with explicit dtype context to ensure Flash Attention 2 compatibility
+    # Load original Llama model on CPU to avoid OOM
+    print("  Loading original LlamaForCausalLM on CPU (to avoid OOM)...")
+    from transformers import LlamaForCausalLM
+    
     dtype_old = torch.get_default_dtype()
-    torch.set_default_dtype(dtype)
+    torch.set_default_dtype(torch.float16)
     
-    model = FLH_FP16LlamaForCausalLM(config)
+    original_model = LlamaForCausalLM.from_pretrained(
+        model_name_or_path,
+        torch_dtype=torch.float16,
+        attn_implementation=attn_implementation,
+        device_map="cpu"  # Load on CPU first
+    )
     
     torch.set_default_dtype(dtype_old)
     
-    # Explicitly convert to target dtype and device
-    model = model.to(device=device, dtype=dtype)
+    # Convert to FLH model using from_float (conversion happens on CPU)
+    if use_quantized:
+        print("  Converting to FLH_LlamaForCausalLM (quantized) using from_float...")
+        model = FLH_LlamaForCausalLM.from_float(
+            original_model, 
+            target_device=device,
+            weight_sym=weight_sym,
+            act_sym=act_sym,
+            save_quantized_path=save_quantized_path  # 量化后立即保存（在移到GPU之前）
+        )
+        
+        # 如果保存了模型，也保存tokenizer
+        if save_quantized_path:
+            print(f"  Saving tokenizer to {save_quantized_path}...")
+            tokenizer.save_pretrained(save_quantized_path)
+    else:
+        print("  Converting to FLH_FP16LlamaForCausalLM using from_float...")
+        model = FLH_FP16LlamaForCausalLM.from_float(original_model, target_device=device)
     
-    # Load pretrained weights
-    # Note: You may need to adapt this based on your weight loading mechanism
     print("✓ Model and tokenizer loaded successfully")
     
     model.eval()
+    
+    # Clean up original model to save memory
+    print("  Cleaning up original model from CPU memory...")
+    del original_model
+    torch.cuda.empty_cache()
+    gc.collect()
     
     return model, tokenizer
 
 
 def load_wikitext2(tokenizer, seq_length=2048, split="test"):
-    """Load and tokenize WikiText2 dataset"""
+    """
+    Load and tokenize WikiText2 dataset following GPTQ evaluation method.
+    
+    Returns tokenized data ready for evaluation.
+    """
     try:
         from datasets import load_dataset
     except ImportError:
@@ -74,100 +144,87 @@ def load_wikitext2(tokenizer, seq_length=2048, split="test"):
     print(f"Loading WikiText2 {split} split...")
     dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split=split)
     
-    # Concatenate all texts
+    # Concatenate all text
     text = "\n\n".join(dataset["text"])
     
-    # Tokenize
-    encodings = tokenizer(text, return_tensors="pt")
+    # Tokenize - following GPTQ: use return_tensors='pt'
+    print(f"  Tokenizing text...")
+    testenc = tokenizer(text, return_tensors='pt')
     
-    # Create sliding window chunks
-    input_ids = encodings.input_ids[0]
+    print(f"✓ Loaded WikiText2 {split}")
+    print(f"  Total tokens: {testenc.input_ids.numel()}")
+    print(f"  Sequence length: {seq_length}")
     
-    # Split into chunks of seq_length
-    num_chunks = (len(input_ids) - 1) // seq_length + 1
-    chunks = []
-    
-    for i in range(num_chunks):
-        start_idx = i * seq_length
-        end_idx = min((i + 1) * seq_length, len(input_ids))
-        chunk = input_ids[start_idx:end_idx]
-        
-        # Pad last chunk if necessary
-        if len(chunk) < seq_length:
-            pad_length = seq_length - len(chunk)
-            chunk = F.pad(chunk, (0, pad_length), value=tokenizer.pad_token_id or tokenizer.eos_token_id)
-        
-        chunks.append(chunk)
-    
-    print(f"✓ Loaded {len(chunks)} chunks from WikiText2 {split}")
-    return torch.stack(chunks)
+    return testenc
 
 
-def calculate_perplexity(model, input_ids, tokenizer, device="cuda", batch_size=1):
+def calculate_perplexity(model, testenc, device="cuda", seq_length=2048):
     """
-    Calculate perplexity on the given input_ids
+    Calculate perplexity following GPTQ evaluation method.
+    
+    This implementation exactly follows the llama_eval function from GPTQ:
+    - Split data into fixed-size chunks of seq_length
+    - Calculate NLL for each chunk
+    - Sum all NLLs and compute perplexity
     
     Args:
         model: The language model
-        input_ids: Tensor of shape [num_samples, seq_length]
-        tokenizer: The tokenizer (for pad_token_id)
+        testenc: Tokenized test data (from tokenizer with return_tensors='pt')
         device: Device to run on
-        batch_size: Batch size for evaluation
+        seq_length: Sequence length for evaluation (default: 2048)
         
     Returns:
-        perplexity: The perplexity score
-        avg_loss: Average cross-entropy loss
+        perplexity: Token-level perplexity score
     """
-    import gc
+    print('Evaluating perplexity...')
     
     model.eval()
-    total_loss = 0.0
-    total_tokens = 0
     
-    num_batches = (len(input_ids) + batch_size - 1) // batch_size
+    # Following GPTQ: testenc.input_ids
+    testenc = testenc.input_ids
+    nsamples = testenc.numel() // seq_length
     
+    print(f"  Number of samples: {nsamples}")
+    print(f"  Sequence length: {seq_length}")
+    
+    testenc = testenc.to(device)
+    
+    nlls = []
     with torch.no_grad():
-        with tqdm(total=num_batches, desc="Calculating perplexity") as pbar:
-            for i in range(0, len(input_ids), batch_size):
-                batch = input_ids[i:i+batch_size].to(device)
-                
-                # Forward pass - only get logits, don't compute loss twice
-                outputs = model(batch, use_cache=False)
-                logits = outputs.logits
-                
-                # Calculate loss manually
-                shift_logits = logits[..., :-1, :].contiguous()
-                shift_labels = batch[..., 1:].contiguous()
-                
-                # Flatten for loss calculation
-                shift_logits_flat = shift_logits.view(-1, shift_logits.size(-1))
-                shift_labels_flat = shift_labels.view(-1)
-                
-                # Count non-padding tokens
-                valid_mask = shift_labels_flat != tokenizer.pad_token_id
-                valid_tokens = valid_mask.sum().item()
-                
-                if valid_tokens > 0:
-                    # Calculate loss only on valid tokens
-                    loss_fct = torch.nn.CrossEntropyLoss(reduction='sum', ignore_index=tokenizer.pad_token_id)
-                    batch_loss = loss_fct(shift_logits_flat, shift_labels_flat)
-                    total_loss += batch_loss.item()
-                    total_tokens += valid_tokens
-                
-                # Clean up to save memory
-                del outputs, logits, shift_logits, shift_labels, batch
-                if i % 10 == 0:  # Periodic cleanup
-                    torch.cuda.empty_cache()
-                    gc.collect()
-                
-                pbar.update(1)
-                if total_tokens > 0:
-                    pbar.set_postfix({"loss": f"{total_loss/total_tokens:.4f}"})
+        # Following GPTQ evaluation loop
+        for i in tqdm(range(nsamples), desc="Calculating perplexity"):
+            # Get the current batch
+            batch = testenc[:, (i * seq_length):((i + 1) * seq_length)]
+            
+            # Forward pass
+            outputs = model(batch, use_cache=False)
+            lm_logits = outputs.logits
+            
+            # Following GPTQ: calculate loss
+            shift_logits = lm_logits[:, :-1, :].contiguous()
+            shift_labels = batch[:, 1:]
+            
+            loss_fct = torch.nn.CrossEntropyLoss()
+            loss = loss_fct(
+                shift_logits.view(-1, shift_logits.size(-1)), 
+                shift_labels.view(-1)
+            )
+            
+            # Following GPTQ: neg_log_likelihood = loss.float() * seq_length
+            neg_log_likelihood = loss.float() * seq_length
+            nlls.append(neg_log_likelihood)
+            
+            # Clean up
+            del outputs, lm_logits, shift_logits, shift_labels, batch
+            if i % 10 == 0:
+                torch.cuda.empty_cache()
     
-    avg_loss = total_loss / total_tokens if total_tokens > 0 else float('inf')
-    perplexity = math.exp(avg_loss) if avg_loss < 100 else float('inf')
+    # Following GPTQ: ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * seq_length))
+    ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * seq_length))
     
-    return perplexity, avg_loss
+    print(f"  Perplexity: {ppl.item():.4f}")
+    
+    return ppl.item()
 
 
 def evaluate_lm_harness(model, tokenizer, tasks, device="cuda", batch_size=1):
@@ -258,6 +315,75 @@ def evaluate_lm_harness(model, tokenizer, tasks, device="cuda", batch_size=1):
         return None
 
 
+def evaluate_model_on_tasks(model, tokenizer, tasks, args, model_name="Model"):
+    """
+    Evaluate a model on specified tasks
+    
+    Args:
+        model: The model to evaluate
+        tokenizer: The tokenizer
+        tasks: List of tasks to evaluate on
+        args: Command-line arguments
+        model_name: Name for logging (e.g., "FLH Model", "Original Model")
+        
+    Returns:
+        Dictionary of results
+    """
+    results = {}
+    
+    # Evaluate on WikiText2
+    if "wikitext" in tasks or "wikitext2" in tasks:
+        print("\n" + "=" * 80)
+        print(f"Evaluating {model_name} on WikiText2")
+        print("=" * 80)
+        
+        testenc = load_wikitext2(
+            tokenizer, 
+            seq_length=args.seq_length, 
+            split=args.split
+        )
+        
+        start_time = time.time()
+        ppl = calculate_perplexity(
+            model, 
+            testenc,
+            device=args.device,
+            seq_length=args.seq_length
+        )
+        eval_time = time.time() - start_time
+        
+        results["wikitext2"] = {
+            "perplexity": ppl,
+            "eval_time_seconds": eval_time,
+            "total_tokens": testenc.input_ids.numel(),
+            "seq_length": args.seq_length,
+            "num_samples": testenc.input_ids.numel() // args.seq_length,
+        }
+        
+        print(f"\n✓ {model_name} WikiText2 Results:")
+        print(f"  Perplexity: {ppl:.4f}")
+        print(f"  Evaluation time: {eval_time:.2f}s")
+    
+    # Evaluate on other benchmarks (if requested)
+    other_tasks = [t for t in tasks if t not in ["wikitext", "wikitext2"]]
+    if other_tasks:
+        print("\n" + "=" * 80)
+        print(f"Evaluating {model_name} on additional benchmarks")
+        print("=" * 80)
+        
+        lm_results = evaluate_lm_harness(
+            model, 
+            tokenizer, 
+            other_tasks, 
+            device=args.device,
+            batch_size=args.lm_eval_batch_size
+        )
+        if lm_results:
+            results.update(lm_results)
+    
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description="Evaluate FLH models on various benchmarks")
     parser.add_argument(
@@ -281,8 +407,8 @@ def main():
     parser.add_argument(
         "--seq-length",
         type=int,
-        default=512,
-        help="Sequence length for evaluation (default: 512, use smaller value if OOM)"
+        default=2048,
+        help="Sequence length for WikiText evaluation (default: 2048, following GPTQ)"
     )
     parser.add_argument(
         "--device",
@@ -323,6 +449,60 @@ def main():
         default=None,
         help="Batch size for lm-eval tasks (default: same as --batch-size)"
     )
+    parser.add_argument(
+        "--quantized",
+        action="store_true",
+        help="Use quantized FLH_LlamaForCausalLM instead of FP16 version"
+    )
+    parser.add_argument(
+        "--compare-with-original",
+        action="store_true",
+        default=True,
+        help="Compare FLH model with original model (default: True)"
+    )
+    parser.add_argument(
+        "--no-compare",
+        dest="compare_with_original",
+        action="store_false",
+        help="Skip comparison with original model"
+    )
+    parser.add_argument(
+        "--original-only",
+        action="store_true",
+        help="Skip FLH model and only evaluate original model"
+    )
+    parser.add_argument(
+        "--save-quantized",
+        type=str,
+        default=None,
+        help="Save quantized model to specified directory (e.g., ./quantized_model)"
+    )
+    parser.add_argument(
+        "--load-quantized",
+        type=str,
+        default=None,
+        help="Load pre-quantized model from specified directory (fast, skips quantization)"
+    )
+    parser.add_argument(
+        "--weight-sym",
+        action="store_true",
+        help="Use symmetric quantization for weights (default: False, asymmetric)"
+    )
+    parser.add_argument(
+        "--act-sym",
+        dest="act_sym",
+        action="store_true",
+        help="Use symmetric quantization for activations (default: True)"
+    )
+    parser.add_argument(
+        "--no-act-sym",
+        dest="act_sym",
+        action="store_false",
+        help="Use asymmetric quantization for activations"
+    )
+    
+    # 设置默认值（在add_argument之后）
+    parser.set_defaults(act_sym=True, weight_sym=False)
     
     args = parser.parse_args()
     
@@ -345,9 +525,18 @@ def main():
         tasks = [t.strip() for t in args.tasks.split(",")]
     
     print("=" * 80)
-    print("FLH Model Evaluation")
+    if args.original_only:
+        print("Original Model Evaluation (FLH Skipped)")
+    elif args.compare_with_original:
+        print("FLH Model Evaluation with Original Model Comparison")
+    else:
+        print("FLH Model Evaluation")
     print("=" * 80)
     print(f"Model: {args.model}")
+    if not args.original_only:
+        print(f"FLH Model type: {'FLH_LlamaForCausalLM (Quantized)' if args.quantized else 'FLH_FP16LlamaForCausalLM'}")
+    print(f"Evaluate FLH model: {not args.original_only}")
+    print(f"Compare with original: {args.compare_with_original or args.original_only}")
     print(f"Tasks: {tasks}")
     print(f"Device: {args.device}")
     print(f"Dtype: {args.dtype}")
@@ -356,67 +545,154 @@ def main():
     print(f"Sequence length: {args.seq_length}")
     print("=" * 80)
     
-    # Load model and tokenizer
-    model, tokenizer = load_model_and_tokenizer(
-        args.model, 
-        device=args.device, 
-        dtype=dtype, 
-        attn_implementation=args.attn_implementation
-    )
-    
-    # Make sure tokenizer has pad_token
+    # Load tokenizer (only once)
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
-    results = {}
+    # Initialize results
+    flh_results = None
+    original_results = None
+    comparison = {}
     
-    # Evaluate on WikiText2
-    if "wikitext" in tasks or "wikitext2" in tasks:
+    # ==================== Evaluate FLH Model (if not skipped) ====================
+    if not args.original_only:
         print("\n" + "=" * 80)
-        print("Evaluating on WikiText2")
+        print("PART 1: Evaluating FLH Model")
         print("=" * 80)
         
-        input_ids = load_wikitext2(tokenizer, seq_length=args.seq_length, split=args.split)
+        # 如果指定了加载路径，从预量化模型加载（快速）
+        if args.load_quantized:
+            print(f"🚀 Fast loading mode: Using pre-quantized model from {args.load_quantized}")
+            flh_model, _ = load_model_and_tokenizer(
+                args.model, 
+                device=args.device, 
+                dtype=dtype, 
+                attn_implementation=args.attn_implementation,
+                use_quantized=args.quantized,
+                load_quantized_path=args.load_quantized,
+                weight_sym=args.weight_sym,
+                act_sym=args.act_sym
+            )
+        else:
+            # 否则从原始模型量化（慢），可选择保存
+            flh_model, _ = load_model_and_tokenizer(
+                args.model, 
+                device=args.device, 
+                dtype=dtype, 
+                attn_implementation=args.attn_implementation,
+                use_quantized=args.quantized,
+                save_quantized_path=args.save_quantized,  # 量化完立即保存（在CPU上）
+                weight_sym=args.weight_sym,
+                act_sym=args.act_sym
+            )
         
-        start_time = time.time()
-        perplexity, avg_loss = calculate_perplexity(
-            model, 
-            input_ids,
-            tokenizer,
-            device=args.device, 
-            batch_size=args.batch_size
-        )
-        eval_time = time.time() - start_time
-        
-        results["wikitext2"] = {
-            "perplexity": perplexity,
-            "loss": avg_loss,
-            "eval_time_seconds": eval_time,
-            "num_samples": len(input_ids),
-            "seq_length": args.seq_length,
-        }
-        
-        print(f"\n✓ WikiText2 Results:")
-        print(f"  Perplexity: {perplexity:.2f}")
-        print(f"  Loss: {avg_loss:.4f}")
-        print(f"  Evaluation time: {eval_time:.2f}s")
-    
-    # Evaluate on other benchmarks (if requested)
-    other_tasks = [t for t in tasks if t not in ["wikitext", "wikitext2"]]
-    if other_tasks:
-        print("\n" + "=" * 80)
-        print("Evaluating on additional benchmarks")
-        print("=" * 80)
-        
-        lm_results = evaluate_lm_harness(
-            model, 
+        # Evaluate FLH model
+        flh_results = evaluate_model_on_tasks(
+            flh_model, 
             tokenizer, 
-            other_tasks, 
-            device=args.device,
-            batch_size=args.lm_eval_batch_size
+            tasks, 
+            args, 
+            model_name="FLH Model"
         )
-        if lm_results:
-            results.update(lm_results)
+        
+        comparison["flh_model"] = flh_results
+        
+        # 注意：如果使用了--save-quantized，模型已经在量化阶段保存了（在CPU上，更快）
+    
+    # Conditionally evaluate original model
+    
+    if args.compare_with_original or args.original_only:
+        # Unload FLH model to free GPU memory (if FLH was evaluated)
+        if not args.original_only and flh_model is not None:
+            print("\n" + "=" * 80)
+            print("Unloading FLH Model to free GPU memory")
+            print("=" * 80)
+            del flh_model
+            torch.cuda.empty_cache()
+            gc.collect()
+            print("✓ FLH Model unloaded, GPU memory freed")
+        
+        # ==================== Evaluate Original Model ====================
+        print("\n" + "=" * 80)
+        if args.original_only:
+            print("Evaluating Original Model")
+        else:
+            print("PART 2: Evaluating Original Model")
+        print("=" * 80)
+        
+        # Load original model
+        original_model = load_original_model(
+            args.model,
+            device=args.device,
+            dtype=dtype,
+            attn_implementation=args.attn_implementation
+        )
+        
+        # Evaluate original model
+        original_results = evaluate_model_on_tasks(
+            original_model, 
+            tokenizer, 
+            tasks, 
+            args, 
+            model_name="Original Model"
+        )
+        
+        # Unload original model
+        print("\n" + "=" * 80)
+        print("Unloading Original Model")
+        print("=" * 80)
+        del original_model
+        torch.cuda.empty_cache()
+        gc.collect()
+        print("✓ Original Model unloaded")
+        
+        # ==================== Compare Results ====================
+        comparison["original_model"] = original_results
+        
+        # Only compare if both models were evaluated
+        if not args.original_only and flh_results is not None:
+            print("\n" + "=" * 80)
+            print("COMPARISON: FLH Model vs Original Model")
+            print("=" * 80)
+            
+            comparison["differences"] = {}
+            
+            # Calculate differences for each task
+            for task_name in flh_results.keys():
+                if task_name in original_results:
+                    flh_task = flh_results[task_name]
+                    orig_task = original_results[task_name]
+                    
+                    if isinstance(flh_task, dict) and isinstance(orig_task, dict):
+                        comparison["differences"][task_name] = {}
+                        for metric in flh_task.keys():
+                            if metric in orig_task and isinstance(flh_task[metric], (int, float)) and isinstance(orig_task[metric], (int, float)):
+                                diff = flh_task[metric] - orig_task[metric]
+                                rel_diff = (diff / orig_task[metric] * 100) if orig_task[metric] != 0 else 0
+                                comparison["differences"][task_name][metric] = {
+                                    "flh": flh_task[metric],
+                                    "original": orig_task[metric],
+                                    "absolute_diff": diff,
+                                    "relative_diff_percent": rel_diff
+                                }
+            
+            # Print comparison
+            for task_name, diffs in comparison["differences"].items():
+                print(f"\n{task_name.upper()}:")
+                for metric, values in diffs.items():
+                    print(f"  {metric}:")
+                    print(f"    FLH Model:      {values['flh']:.4f}")
+                    print(f"    Original Model: {values['original']:.4f}")
+                    print(f"    Absolute Diff:  {values['absolute_diff']:+.4f}")
+                    print(f"    Relative Diff:  {values['relative_diff_percent']:+.2f}%")
+    else:
+        # If not comparing, clean up FLH model if it exists
+        if not args.original_only and 'flh_model' in locals():
+            del flh_model
+            torch.cuda.empty_cache()
+            gc.collect()
     
     # Save results
     print("\n" + "=" * 80)
@@ -425,7 +701,7 @@ def main():
     
     output_path = Path(args.output)
     with open(output_path, "w") as f:
-        json.dump(results, f, indent=2)
+        json.dump(comparison, f, indent=2)
     
     print(f"✓ Results saved to {output_path}")
     
@@ -434,13 +710,31 @@ def main():
     print("EVALUATION SUMMARY")
     print("=" * 80)
     
-    for task_name, task_results in results.items():
-        print(f"\n{task_name.upper()}:")
-        for metric, value in task_results.items():
-            if isinstance(value, float):
-                print(f"  {metric}: {value:.4f}")
+    if flh_results is not None:
+        print("\n--- FLH MODEL ---")
+        for task_name, task_results in flh_results.items():
+            print(f"\n{task_name.upper()}:")
+            if isinstance(task_results, dict):
+                for metric, value in task_results.items():
+                    if isinstance(value, float):
+                        print(f"  {metric}: {value:.4f}")
+                    else:
+                        print(f"  {metric}: {value}")
             else:
-                print(f"  {metric}: {value}")
+                print(f"  {task_results}")
+    
+    if original_results is not None:
+        print("\n--- ORIGINAL MODEL ---")
+        for task_name, task_results in original_results.items():
+            print(f"\n{task_name.upper()}:")
+            if isinstance(task_results, dict):
+                for metric, value in task_results.items():
+                    if isinstance(value, float):
+                        print(f"  {metric}: {value:.4f}")
+                    else:
+                        print(f"  {metric}: {value}")
+            else:
+                print(f"  {task_results}")
     
     print("\n" + "=" * 80)
 

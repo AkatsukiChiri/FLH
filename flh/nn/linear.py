@@ -3,64 +3,119 @@ import flh
 
 
 class LinearFLH(torch.nn.Module):
-    def __init__(self, in_features, out_features, bias=False, dtype=torch.float16):
+    """
+    Quantized Linear layer with fake quantization.
+    
+    This layer performs forward pass with pre-quantized weights.
+    Weight quantization is done once during from_float() conversion.
+    """
+    def __init__(self, in_features, out_features, bias=False, dtype=torch.float16, device='cpu'):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.register_buffer('weight_scales',
-                             torch.zeros((self.out_features, 1), requires_grad=False))
+        
+        # Weight parameter (will store quantized weights)
         self.register_buffer('weight', 
-                             torch.randn(self.out_features, self.in_features, dtype=dtype, requires_grad=False))
+                           torch.randn(self.out_features, self.in_features, dtype=dtype, device=device, requires_grad=False))
         
         if bias:
-            self.register_buffer('bias', torch.zeros((self.out_features), dtype=dtype))
+            self.register_buffer('bias', torch.zeros((self.out_features), dtype=dtype, device=device))
         else:
             self.bias = None
     
     def forward(self, x):
-        assert type(x) == flh.PackedQuantizedTensor
-        x, scales_x = x.quantized_x, x.scales_x
-        
-        x_dequant = x * scales_x
-        weight_dequant = self.weight * self.weight_scales   
-        x = torch.matmul(x_dequant, weight_dequant.t())
-        
-        if self.bias is not None:
-            return x + self.bias
-        else:
-            return x
+        # Standard linear operation with pre-quantized weight
+        x = torch.nn.functional.linear(x, self.weight, self.bias)
+        return x
     
     @staticmethod    
-    def from_float(module: torch.nn.Linear, weight_scales=None):
+    def from_float(module: torch.nn.Linear, weight_bits=4, weight_group_size=128, weight_sym=True):
         """
-        根据浮点 Linear 模块以及权重量化尺度，构建 LinearFLH 量化线性层
+        Convert a float Linear module to LinearFLH with weight quantization.
 
         Args:
-            module (torch.nn.Linear): 源 torch Linear 层
-            weight_scales (Tensor or None): 权重量化尺度 (out_features, 1)
+            module (torch.nn.Linear): Source torch Linear layer
+            weight_bits: Number of bits for weight quantization (default: 4)
+            weight_group_size: Group size for weight quantization (default: 128, -1 for per-channel)
+            weight_sym: Whether to use symmetric quantization (default: True)
 
         Returns:
-            LinearFLH实例
+            LinearFLH instance with quantized weights
         """
         in_features = module.in_features
         out_features = module.out_features
         bias_flag = module.bias is not None
         dtype = module.weight.dtype
+        device = module.weight.device
 
-        flh_linear = LinearFLH(in_features, out_features, bias=bias_flag, dtype=dtype)
+        # Create LinearFLH instance on the same device
+        flh_linear = LinearFLH(
+            in_features, 
+            out_features, 
+            bias=bias_flag, 
+            dtype=dtype,
+            device=device
+        )
 
-        # weight_scales: 若未提供则默认全1（无量化）
-        if weight_scales is None:
-            weight_scales = torch.ones((out_features, 1), dtype=module.weight.dtype, device=module.weight.device)
-
-        # register weight_scales, weight
-        flh_linear.weight_scales.copy_(weight_scales)
-        flh_linear.weight.copy_(module.weight.data / weight_scales)  # 假定weight已量化: weight = orig_weight / scale
-
+        # Copy weights
+        flh_linear.weight.copy_(module.weight.data)
+        
         if bias_flag:
-            orig_bias = module.bias.data
-            # 简单假定weight/activation都量化后，bias通常不用量化或只用量化scale校正
-            # 此处假设权重scale已纳入，总保持float
-            flh_linear.bias.copy_(orig_bias)
+            flh_linear.bias.copy_(module.bias.data)
+        
+        # ⭐ 重要：无论weight_bits是多少，都要应用Hadamard变换和量化
+        # 这样权重和激活才能在同一个域中进行矩阵乘法
+        
+        # Check for NaN in original weights
+        if torch.isnan(module.weight.data).any():
+            print(f"WARNING: NaN detected in original weights for layer {out_features}x{in_features}")
+            return flh_linear
+        
+        # Create weight quantizer
+        weight_quantizer = flh.nn.WeightQuantizer(
+            bits=weight_bits,
+            group_size=weight_group_size,
+            sym=weight_sym,
+            channel_wise=(weight_group_size == -1)
+        )
+        
+        # Calibrate and quantize weights (即使bits >= 16也要执行，以应用Hadamard变换)
+        weight_quantizer.calibrate(flh_linear.weight)
+        
+        # Check for NaN in scale (only if actually quantizing)
+        if weight_bits < 16 and torch.isnan(weight_quantizer.scale).any():
+            print(f"WARNING: NaN detected in quantization scale for layer {out_features}x{in_features}")
+            print(f"  Weight stats: min={flh_linear.weight.min():.6f}, max={flh_linear.weight.max():.6f}, mean={flh_linear.weight.mean():.6f}")
+            return flh_linear
+        
+        quantized_weight = weight_quantizer.quantize(flh_linear.weight)
+        
+        # Check for NaN in quantized weights
+        if torch.isnan(quantized_weight).any():
+            print(f"WARNING: NaN detected in quantized weights for layer {out_features}x{in_features}")
+            if weight_bits < 16:
+                print(f"  Scale stats: min={weight_quantizer.scale.min():.6f}, max={weight_quantizer.scale.max():.6f}")
+            return flh_linear
+        
+        # Replace original weight with quantized (and Hadamard-transformed) weight
+        flh_linear.weight.copy_(quantized_weight)
 
         return flh_linear
+    
+    
+
+if __name__ == "__main__":
+    layer = torch.nn.Linear(1024, 1024)
+    
+    x = torch.randn(1024, 1024)
+    y_ref = layer(x)
+    
+    layer_flh = LinearFLH.from_float(layer, weight_bits=15, weight_group_size=-1, weight_sym=True)
+    x_flh = flh.nn.ActQuantizer(bits=15, group_size=-1, sym=True)(x)
+    
+    y_flh = layer_flh(x)
+    
+    print(y_ref)
+    print(y_flh)
+    
+    print(torch.allclose(y_ref, y_flh, atol=1e-2))

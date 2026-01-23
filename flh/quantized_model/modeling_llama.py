@@ -1,5 +1,6 @@
 import flh
 import torch
+from tqdm import tqdm
 from transformers.utils import logging
 from transformers.modeling_flash_attention_utils import _flash_attention_forward
 from transformers import LlamaConfig
@@ -114,6 +115,7 @@ class FLH_FP16LlamaAttention(LlamaFlashAttention2):
         )
 
         attn_output = attn_output.reshape(bsz, q_len, -1).contiguous()
+        attn_output = self.quantizer(attn_output)
         attn_output = self.o_proj(attn_output)
 
         if not output_attentions:
@@ -122,25 +124,24 @@ class FLH_FP16LlamaAttention(LlamaFlashAttention2):
         return attn_output, attn_weights, past_key_value
     
 class FLH_LlamaAttention(FLH_FP16LlamaAttention):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, act_bits=16, act_group_size=-1, act_sym=True, **kwargs):
         super().__init__(*args, **kwargs)
-        self.quantizer = flh.nn.Quantizer(bits=16, group_size=-1, sym=True)
-        self.q_proj = flh.nn.LinearFLH.from_float(self.q_proj)
-        self.k_proj = flh.nn.LinearFLH.from_float(self.k_proj)
-        self.v_proj = flh.nn.LinearFLH.from_float(self.v_proj)
-        self.o_proj = flh.nn.LinearFLH.from_float(self.o_proj)
+        # Activation quantizer (可配置对称/非对称量化)
+        self.quantizer = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym)
         
 class FLH_LlamaMLP(LlamaMLP):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, act_bits=16, act_group_size=-1, act_sym=True, **kwargs):
         super().__init__(*args, **kwargs)
-        self.quantizer = flh.nn.Quantizer(bits=16, group_size=-1, sym=True)
-        self.up_proj = flh.nn.LinearFLH.from_float(self.up_proj)
-        self.gate_proj = flh.nn.LinearFLH.from_float(self.gate_proj)
-        self.down_proj = flh.nn.LinearFLH.from_float(self.down_proj)
+        # Activation quantizer (可配置对称/非对称量化)
+        self.quantizer = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym)
         
     def forward(self, x):
+        # Apply activation quantization if needed
         x = self.quantizer(x)
-        return super().forward(x)
+        
+        x = self.act_fn(self.gate_proj(x)) * self.up_proj(x)
+        x = self.quantizer(x)
+        return self.down_proj(x)
     
 class FLH_FP16LlamaForCausalLM(LlamaForCausalLM):
     """
@@ -153,19 +154,465 @@ class FLH_FP16LlamaForCausalLM(LlamaForCausalLM):
         # Replace attention modules with FLH versions
         for layer_idx, layer in enumerate(self.model.layers):
             layer.self_attn = FLH_FP16LlamaAttention(config=config, layer_idx=layer_idx)
+    
+    @classmethod
+    def from_float(cls, float_model, target_device="cuda"):
+        """
+        Convert a standard LlamaForCausalLM model to FLH_FP16LlamaForCausalLM.
+        
+        Args:
+            float_model: A LlamaForCausalLM model instance (can be on CPU or GPU)
+            target_device: Target device for the converted model (default: "cuda")
+            
+        Returns:
+            FLH_FP16LlamaForCausalLM model with copied weights in half precision
+        """
+        # Create a new FLH model with the same config on CPU first
+        config = float_model.config
+        config._attn_implementation = "flash_attention_2"
+        
+        # Set default dtype to half for model initialization
+        dtype_old = torch.get_default_dtype()
+        torch.set_default_dtype(torch.float16)
+        
+        print("  Creating FLH model structure on CPU...")
+        flh_model = cls(config)
+        
+        torch.set_default_dtype(dtype_old)
+        
+        # Ensure model is in half precision and on CPU for weight copying
+        flh_model = flh_model.half().cpu()
+        
+        print("Copying weights from original model to FLH model (on CPU)...")
+        
+        # Copy weights from float model to FLH model
+        # Copy embedding and lm_head
+        print("  - Copying embedding and lm_head...")
+        flh_model.model.embed_tokens.load_state_dict(float_model.model.embed_tokens.state_dict())
+        flh_model.lm_head.load_state_dict(float_model.lm_head.state_dict())
+        flh_model.model.norm.load_state_dict(float_model.model.norm.state_dict())
+        
+        # Copy layer weights with progress bar
+        num_layers = len(flh_model.model.layers)
+        print(f"  - Copying {num_layers} transformer layers...")
+        for layer_idx, (flh_layer, float_layer) in enumerate(tqdm(
+            zip(flh_model.model.layers, float_model.model.layers),
+            total=num_layers,
+            desc="  Copying layers"
+        )):
+            # Copy attention weights
+            flh_layer.self_attn.q_proj.load_state_dict(float_layer.self_attn.q_proj.state_dict())
+            flh_layer.self_attn.k_proj.load_state_dict(float_layer.self_attn.k_proj.state_dict())
+            flh_layer.self_attn.v_proj.load_state_dict(float_layer.self_attn.v_proj.state_dict())
+            flh_layer.self_attn.o_proj.load_state_dict(float_layer.self_attn.o_proj.state_dict())
+            
+            # Copy MLP weights
+            flh_layer.mlp.gate_proj.load_state_dict(float_layer.mlp.gate_proj.state_dict())
+            flh_layer.mlp.up_proj.load_state_dict(float_layer.mlp.up_proj.state_dict())
+            flh_layer.mlp.down_proj.load_state_dict(float_layer.mlp.down_proj.state_dict())
+            
+            # Copy layer norms
+            flh_layer.input_layernorm.load_state_dict(float_layer.input_layernorm.state_dict())
+            flh_layer.post_attention_layernorm.load_state_dict(float_layer.post_attention_layernorm.state_dict())
+        
+        print("✓ Weight copying completed!")
+        
+        # Move model to target device
+        if target_device != "cpu":
+            print(f"  Moving model to {target_device}...")
+            flh_model = flh_model.to(device=target_device)
+            print(f"✓ Model successfully moved to {target_device}!")
+        
+        return flh_model
 
 class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
     """
-    Fully quantized FLH Llama model with INT4 quantization.
+    Fully quantized FLH Llama model with configurable weight and activation quantization.
     Uses transformers' native KV cache.
     """
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, config, weight_bits=4, weight_group_size=128, act_bits=16, act_group_size=-1):
+        # Don't call super().__init__ to avoid double initialization
+        # Instead, manually initialize LlamaForCausalLM
+        LlamaForCausalLM.__init__(self, config)
         assert config._attn_implementation == "flash_attention_2"
+        
+        self.weight_bits = weight_bits
+        self.weight_group_size = weight_group_size
+        self.act_bits = act_bits
+        self.act_group_size = act_group_size
+        
         # Replace with quantized versions
-        self.norm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.model.norm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        
+        print(f"Initializing FLH_LlamaForCausalLM with:")
+        print(f"  Weight quantization: {weight_bits}-bit, group_size={weight_group_size}")
+        print(f"  Activation quantization: {act_bits}-bit, group_size={act_group_size}")
+        
         for layer_idx, layer in enumerate(self.model.layers):
-            layer.self_attn = FLH_LlamaAttention(config=config, layer_idx=layer_idx)
+            layer.self_attn = FLH_LlamaAttention(
+                config=config, 
+                layer_idx=layer_idx,
+                act_bits=act_bits,
+                act_group_size=act_group_size
+            )
             layer.input_layernorm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
             layer.post_attention_layernorm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-            layer.mlp = FLH_LlamaMLP(config=config)
+            layer.mlp = FLH_LlamaMLP(
+                config=config,
+                act_bits=act_bits,
+                act_group_size=act_group_size
+            )
+    
+    @classmethod
+    def from_float(cls, float_model, target_device="cuda", weight_bits=4, weight_group_size=128, act_bits=4, act_group_size=128, weight_sym=False, act_sym=True, save_quantized_path=None):
+        """
+        Convert a standard LlamaForCausalLM model to FLH_LlamaForCausalLM with quantization.
+        
+        Args:
+            float_model: A LlamaForCausalLM model instance (can be on CPU or GPU)
+            target_device: Target device for the converted model (default: "cuda")
+            weight_bits: Number of bits for weight quantization (default: 4)
+            weight_group_size: Group size for weight quantization (default: 128)
+            act_bits: Number of bits for activation quantization (default: 16, no quant)
+            act_group_size: Group size for activation quantization (default: -1, per-channel)
+            weight_sym: Whether to use symmetric quantization for weights (default: False)
+            act_sym: Whether to use symmetric quantization for activations (default: True)
+            save_quantized_path: Optional path to save quantized model before moving to GPU (default: None)
+            
+        Returns:
+            FLH_LlamaForCausalLM model with quantized weights in half precision
+        """
+        # Create a new FLH model with the same config on CPU first
+        config = float_model.config
+        config._attn_implementation = "flash_attention_2"
+        
+        # Set default dtype to half for model initialization
+        dtype_old = torch.get_default_dtype()
+        torch.set_default_dtype(torch.float16)
+        
+        print("  Creating FLH quantized model structure on CPU...")
+        print(f"  Quantization config: W{weight_bits}G{weight_group_size}{'_sym' if weight_sym else '_asym'} / A{act_bits}G{act_group_size}{'_sym' if act_sym else '_asym'}")
+        
+        # Create model WITHOUT calling __init__ to avoid premature quantization
+        flh_model = cls.__new__(cls)
+        LlamaForCausalLM.__init__(flh_model, config)
+        flh_model.weight_bits = weight_bits
+        flh_model.weight_group_size = weight_group_size
+        flh_model.act_bits = act_bits
+        flh_model.act_group_size = act_group_size
+        flh_model.weight_sym = weight_sym
+        flh_model.act_sym = act_sym
+        
+        torch.set_default_dtype(dtype_old)
+        
+        # Ensure model is in half precision (FP16) and on CPU
+        flh_model = flh_model.half().cpu()
+        flh_model.model.embed_tokens = flh_model.model.embed_tokens.half()
+        flh_model.lm_head = flh_model.lm_head.half()
+        
+        print("Copying and quantizing weights from original model to FLH model (on CPU, FP16)...")
+        
+        # Copy embedding and lm_head (keep in half, no quantization)
+        print("  - Copying embedding and lm_head...")
+        flh_model.model.embed_tokens.load_state_dict(float_model.model.embed_tokens.state_dict())
+        flh_model.lm_head.load_state_dict(float_model.lm_head.state_dict())
+        
+        # Replace and copy norm layer
+        flh_model.model.norm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        flh_model.model.norm.weight.data.copy_(float_model.model.norm.weight.data)
+        
+        # Copy and quantize layer weights with progress bar
+        num_layers = len(flh_model.model.layers)
+        print(f"  - Copying and quantizing {num_layers} transformer layers...")
+        
+        for layer_idx, (flh_layer, float_layer) in enumerate(tqdm(
+            zip(flh_model.model.layers, float_model.model.layers),
+            total=num_layers,
+            desc="  Quantizing layers"
+        )):
+            # Replace attention with quantized version
+            flh_layer.self_attn = FLH_LlamaAttention(
+                config=config,
+                layer_idx=layer_idx,
+                act_bits=act_bits,
+                act_group_size=act_group_size,
+                act_sym=act_sym
+            )
+            
+            # Quantize attention weights using LinearFLH.from_float
+            flh_layer.self_attn.q_proj = flh.nn.LinearFLH.from_float(
+                float_layer.self_attn.q_proj,
+                weight_bits=weight_bits,
+                weight_group_size=weight_group_size,
+                weight_sym=weight_sym
+            )
+            flh_layer.self_attn.k_proj = flh.nn.LinearFLH.from_float(
+                float_layer.self_attn.k_proj,
+                weight_bits=weight_bits,
+                weight_group_size=weight_group_size,
+                weight_sym=weight_sym
+            )
+            flh_layer.self_attn.v_proj = flh.nn.LinearFLH.from_float(
+                float_layer.self_attn.v_proj,
+                weight_bits=weight_bits,
+                weight_group_size=weight_group_size,
+                weight_sym=weight_sym
+            )
+            flh_layer.self_attn.o_proj = flh.nn.LinearFLH.from_float(
+                float_layer.self_attn.o_proj,
+                weight_bits=weight_bits,
+                weight_group_size=weight_group_size,
+                weight_sym=weight_sym
+            )
+            
+            # Replace MLP with quantized version
+            flh_layer.mlp = FLH_LlamaMLP(
+                config=config,
+                act_bits=act_bits,
+                act_group_size=act_group_size,
+                act_sym=act_sym
+            )
+            
+            # Quantize MLP weights using LinearFLH.from_float
+            flh_layer.mlp.gate_proj = flh.nn.LinearFLH.from_float(
+                float_layer.mlp.gate_proj,
+                weight_bits=weight_bits,
+                weight_group_size=weight_group_size,
+                weight_sym=weight_sym
+            )
+            flh_layer.mlp.up_proj = flh.nn.LinearFLH.from_float(
+                float_layer.mlp.up_proj,
+                weight_bits=weight_bits,
+                weight_group_size=weight_group_size,
+                weight_sym=weight_sym
+            )
+            flh_layer.mlp.down_proj = flh.nn.LinearFLH.from_float(
+                float_layer.mlp.down_proj,
+                weight_bits=weight_bits,
+                weight_group_size=weight_group_size,
+                weight_sym=weight_sym
+            )
+            
+            # Replace and copy layer norms
+            flh_layer.input_layernorm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+            flh_layer.post_attention_layernorm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+            flh_layer.input_layernorm.weight.data.copy_(float_layer.input_layernorm.weight.data)
+            flh_layer.post_attention_layernorm.weight.data.copy_(float_layer.post_attention_layernorm.weight.data)
+        
+        print("\n✓ Weight copying and quantization completed!")
+        
+        # 确保模型是FP16格式
+        flh_model = flh_model.half()
+        
+        # ⭐ 优化：如果需要保存，先在CPU上保存（更快，节省GPU内存，FP16格式）
+        if save_quantized_path:
+            print(f"\n  Saving quantized model to {save_quantized_path} (on CPU, FP16 format)...")
+            flh_model.save_quantized(save_quantized_path)
+            print(f"  ✓ Model saved! You can load it next time with: --load-quantized {save_quantized_path}")
+        
+        # 然后再移到目标设备（如果需要）
+        if target_device != "cpu":
+            print(f"\n  Moving quantized model to {target_device}...")
+            flh_model = flh_model.to(device=target_device)
+            print(f"✓ Model successfully moved to {target_device} (FP16)!")
+        
+        return flh_model
+    
+    def save_quantized(self, save_directory):
+        """
+        保存量化后的模型（FP16格式），使用优化的格式避免下次重新量化
+        
+        注意：模型应该在CPU上调用此方法以确保稳定性
+        
+        Args:
+            save_directory: 保存目录
+        """
+        import os
+        os.makedirs(save_directory, exist_ok=True)
+        
+        print(f"Saving quantized model to {save_directory} (FP16 format)...")
+        
+        # 检查模型是否在CPU上
+        device = next(self.parameters()).device
+        if device.type != "cpu":
+            print(f"  ⚠️ Warning: Model is on {device}, moving to CPU for saving...")
+            self.cpu()
+        
+        # 确保是FP16
+        self.half()
+        
+        # 保存模型权重（FP16，CPU）- 使用优化选项
+        state_dict = self.state_dict()
+        # 确保所有权重都是FP16
+        for key in state_dict:
+            if state_dict[key].dtype == torch.float32:
+                state_dict[key] = state_dict[key].half()
+        
+        # 使用优化的保存方式
+        # 1. 使用 pickle_protocol=4 以支持大文件
+        # 2. 使用 _use_new_zipfile_serialization=True 以提高速度
+        torch.save(
+            state_dict, 
+            os.path.join(save_directory, "model.pt"),
+            pickle_protocol=4,
+            _use_new_zipfile_serialization=True
+        )
+        
+        print(f"  ✓ Weights saved (FP16, CPU)")
+        
+        # 保存配置
+        self.config.save_pretrained(save_directory)
+        
+        # 保存量化配置
+        quant_config = {
+            "weight_bits": self.weight_bits,
+            "weight_group_size": self.weight_group_size,
+            "act_bits": self.act_bits,
+            "act_group_size": self.act_group_size,
+            "weight_sym": self.weight_sym,
+            "act_sym": self.act_sym,
+            "dtype": "float16",  # 标记存储格式
+        }
+        import json
+        with open(os.path.join(save_directory, "quantization_config.json"), "w") as f:
+            json.dump(quant_config, f, indent=2)
+        
+        print(f"✓ Model saved to {save_directory} (FP16 format)")
+    
+    @classmethod
+    def load_quantized(cls, load_directory, target_device="cuda"):
+        """
+        加载已量化的模型（FP16格式），快速恢复
+        
+        Args:
+            load_directory: 模型目录
+            target_device: 目标设备
+        
+        Returns:
+            加载的FLH_LlamaForCausalLM模型（FP16）
+        """
+        import os
+        import json
+        from transformers import AutoConfig
+        
+        print(f"Loading quantized model from {load_directory} (FP16 format)...")
+        
+        # 加载配置
+        config = AutoConfig.from_pretrained(load_directory)
+        config._attn_implementation = "flash_attention_2"
+        
+        # 加载量化配置
+        with open(os.path.join(load_directory, "quantization_config.json"), "r") as f:
+            quant_config = json.load(f)
+        
+        # 读取对称/非对称量化配置（向后兼容）
+        weight_sym = quant_config.get("weight_sym", False)
+        act_sym = quant_config.get("act_sym", True)
+        
+        print(f"  Quantization config: W{quant_config['weight_bits']}G{quant_config['weight_group_size']}{'_sym' if weight_sym else '_asym'} / "
+              f"A{quant_config['act_bits']}G{quant_config['act_group_size']}{'_sym' if act_sym else '_asym'}")
+        
+        # 确保dtype是FP16
+        if quant_config.get("dtype", "float16") != "float16":
+            print(f"  ⚠ Warning: Model was saved with dtype={quant_config.get('dtype')}, converting to float16")
+        
+        # ⚠️ 重要：先加载到CPU，完成所有初始化后再移动到GPU
+        print(f"  Loading model weights to CPU...")
+        
+        # 使用 mmap 加速大文件加载（PyTorch 1.13+支持mmap）
+        load_kwargs = {"map_location": "cpu"}  # 始终先加载到CPU
+        try:
+            # 尝试使用 mmap（需要 PyTorch 1.13+）
+            state_dict = torch.load(
+                os.path.join(load_directory, "model.pt"), 
+                mmap=True,
+                **load_kwargs
+            )
+        except TypeError:
+            # 旧版本PyTorch不支持mmap参数
+            state_dict = torch.load(
+                os.path.join(load_directory, "model.pt"),
+                **load_kwargs
+            )
+        
+        # 确保加载的权重是FP16
+        for key in list(state_dict.keys()):
+            if state_dict[key].dtype == torch.float32:
+                print(f"  ⚠ Converting {key} from float32 to float16")
+                state_dict[key] = state_dict[key].half()
+        
+        # ⚡ 优化：创建模型时使用 meta device，避免初始化开销（PyTorch 1.10+）
+        print("  Creating model structure...")
+        dtype_old = torch.get_default_dtype()
+        torch.set_default_dtype(torch.float16)
+        
+        # 尝试使用 meta device（需要 PyTorch 1.10+）
+        use_meta = hasattr(torch, 'device') and 'meta' in dir(torch)
+        if use_meta:
+            try:
+                with torch.device("meta"):
+                    flh_model = cls.__new__(cls)
+                    LlamaForCausalLM.__init__(flh_model, config)
+            except:
+                use_meta = False
+        
+        if not use_meta:
+            # 回退到普通初始化
+            flh_model = cls.__new__(cls)
+            LlamaForCausalLM.__init__(flh_model, config)
+        
+        flh_model.weight_bits = quant_config["weight_bits"]
+        flh_model.weight_group_size = quant_config["weight_group_size"]
+        flh_model.act_bits = quant_config["act_bits"]
+        flh_model.act_group_size = quant_config["act_group_size"]
+        flh_model.weight_sym = weight_sym
+        flh_model.act_sym = act_sym
+        
+        torch.set_default_dtype(dtype_old)
+        
+        # 替换为FLH组件（批量替换以提高速度）
+        print("  Replacing with FLH components...")
+        flh_model.model.norm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        
+        # 批量创建所有层（减少循环开销）
+        num_layers = len(flh_model.model.layers)
+        for layer_idx in range(num_layers):
+            layer = flh_model.model.layers[layer_idx]
+            layer.self_attn = FLH_LlamaAttention(
+                config=config,
+                layer_idx=layer_idx,
+                act_bits=quant_config["act_bits"],
+                act_group_size=quant_config["act_group_size"],
+                act_sym=act_sym
+            )
+            layer.input_layernorm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+            layer.post_attention_layernorm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+            layer.mlp = FLH_LlamaMLP(
+                config=config,
+                act_bits=quant_config["act_bits"],
+                act_group_size=quant_config["act_group_size"],
+                act_sym=act_sym
+            )
+        
+        # 加载权重到模型（在CPU上）
+        print("  Loading weights to model (on CPU)...")
+        try:
+            # PyTorch 2.0+ 支持 assign=True
+            flh_model.load_state_dict(state_dict, assign=True, strict=False)
+        except TypeError:
+            # 旧版本回退
+            flh_model.load_state_dict(state_dict, strict=False)
+        
+        # 确保整个模型是FP16
+        flh_model.half()
+        
+        # ⚡ 关键：所有模块都初始化完成后，统一移动到目标设备
+        if target_device != "cpu":
+            print(f"  Moving complete model to {target_device}...")
+            flh_model = flh_model.to(device=target_device)
+            print(f"  ✓ All modules moved to {target_device}")
+        
+        flh_model.eval()
+        print(f"✓ Model loaded successfully on {target_device} (FP16)")
+        
+        return flh_model

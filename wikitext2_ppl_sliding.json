@@ -1,8 +1,0 @@
-{
-  "perplexity": 202748.546875,
-  "eval_time_seconds": 167.05015110969543,
-  "max_length": 2048,
-  "stride": 512,
-  "method": "sliding",
-  "split": "test"
-}
