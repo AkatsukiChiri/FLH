@@ -1,5 +1,6 @@
 import torch
-import flh
+
+from . import quantization as _quant
 
 
 class LinearFLH(torch.nn.Module):
@@ -72,7 +73,7 @@ class LinearFLH(torch.nn.Module):
             return flh_linear
         
         # Create weight quantizer
-        weight_quantizer = flh.nn.WeightQuantizer(
+        weight_quantizer = _quant.WeightQuantizer(
             bits=weight_bits,
             group_size=weight_group_size,
             sym=weight_sym,
@@ -111,7 +112,7 @@ if __name__ == "__main__":
     y_ref = layer(x)
     
     layer_flh = LinearFLH.from_float(layer, weight_bits=15, weight_group_size=-1, weight_sym=True)
-    x_flh = flh.nn.ActQuantizer(bits=15, group_size=-1, sym=True)(x)
+    x_flh = _quant.ActQuantizer(bits=15, group_size=-1, sym=True)(x)
     
     y_flh = layer_flh(x)
     

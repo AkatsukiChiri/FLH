@@ -17,11 +17,13 @@ except (ImportError, AttributeError):
     pass
 
 if not _cuda_extension_available:
-    # Use pure Python fallback implementation
-    from . import _cuda_fallback
-    _CUDA = _cuda_fallback
-    print("Warning: Using pure Python fallback for CUDA operations (slower). "
-          "Consider compiling CUDA extensions for better performance.")
+    try:
+        from . import _cuda_fallback
+        _CUDA = _cuda_fallback
+        print("Warning: Using pure Python fallback for CUDA operations (slower). "
+              "Consider compiling CUDA extensions for better performance.")
+    except ImportError:
+        _CUDA = None
 
 
 class PackedQuantizedTensor:

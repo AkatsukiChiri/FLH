@@ -1,5 +1,7 @@
+import gc
 import flh
 import torch
+import torch.nn as nn
 from tqdm import tqdm
 from transformers.utils import logging
 from transformers.modeling_flash_attention_utils import _flash_attention_forward
@@ -7,11 +9,141 @@ from transformers import LlamaConfig
 from transformers.models.llama.modeling_llama import LlamaForCausalLM, LlamaFlashAttention2, apply_rotary_pos_emb, LlamaMLP
 from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS
 from transformers.cache_utils import Cache, DynamicCache
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List, Dict
 
 logger = logging.get_logger(__name__)
 
 ALL_LAYERNORM_LAYERS = [flh.nn.RMSNorm]
+
+
+def _collect_calibration_inputs(model, dataloader, device, nsamples, seqlen):
+    """
+    Run model on calibration data and collect inputs to each linear layer.
+    Keeps model on CPU, moving only necessary parts to GPU per step to save memory.
+    Returns: {layer_idx: {linear_name: [list of input tensors]}} (tensors on CPU)
+    """
+    model.eval()
+    model.config.use_cache = False
+    if not hasattr(model, "seqlen"):
+        model.seqlen = seqlen
+    layers = model.model.layers
+    dtype = next(model.parameters()).dtype
+
+    model.model.embed_tokens = model.model.embed_tokens.to(device)
+    model.model.norm = model.model.norm.to(device)
+    if hasattr(model.model, "rotary_emb"):
+        model.model.rotary_emb = model.model.rotary_emb.to(device)
+    layers[0] = layers[0].to(device)
+
+    cache = {"i": 0, "attention_mask": None, "position_ids": None}
+    inps = torch.zeros((nsamples, seqlen, model.config.hidden_size), dtype=dtype, device=device)
+
+    class Catcher(nn.Module):
+        def __init__(self, module):
+            super().__init__()
+            self.module = module
+        def forward(self, inp, **kwargs):
+            inps[cache["i"]] = inp
+            cache["i"] += 1
+            cache["attention_mask"] = kwargs.get("attention_mask")
+            cache["position_ids"] = kwargs.get("position_ids")
+            raise ValueError
+
+    layers[0] = Catcher(layers[0])
+    for batch in dataloader:
+        try:
+            with torch.no_grad():
+                model(batch[0].to(device))
+        except ValueError:
+            pass
+    layers[0] = layers[0].module
+
+    layers[0] = layers[0].cpu()
+    model.model.embed_tokens = model.model.embed_tokens.cpu()
+    model.model.norm = model.model.norm.cpu()
+    if hasattr(model.model, "rotary_emb"):
+        model.model.rotary_emb = model.model.rotary_emb.cpu()
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    attention_mask = cache["attention_mask"]
+    position_ids = cache["position_ids"]
+
+    sequential = [
+        ["self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj"],
+        ["self_attn.o_proj"],
+        ["mlp.gate_proj", "mlp.up_proj"],
+        ["mlp.down_proj"],
+    ]
+
+    collected = {}
+    outs = torch.zeros_like(inps)
+
+    for i in range(len(layers)):
+        layer = layers[i].to(device)
+
+        def make_hook(name):
+            inputs_list = []
+            def hook(module, inp, out):
+                inputs_list.append(inp[0].detach().cpu())
+            return hook, inputs_list
+
+        hooks = []
+        inputs_dict = {}
+        for names in sequential:
+            for name in names:
+                module = layer
+                for part in name.split("."):
+                    module = getattr(module, part)
+                hook, inputs_list = make_hook(name)
+                inputs_dict[name] = inputs_list
+                hooks.append(module.register_forward_hook(hook))
+
+        for j in range(nsamples):
+            with torch.no_grad():
+                outs[j] = layer(
+                    inps[j].unsqueeze(0),
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                )[0]
+
+        for h in hooks:
+            h.remove()
+
+        collected[i] = {k: v for k, v in inputs_dict.items()}
+        inps, outs = outs, inps
+        layers[i] = layer.cpu()
+        del layer
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    model.config.use_cache = True
+    return collected
+
+
+def get_calibration_dataloader(model_name_or_path, nsamples=32, seqlen=512, seed=0):
+    """
+    Create calibration dataloader from WikiText2 train split (for GPTQ).
+    Returns list of (input_ids,) tuples.
+    """
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        raise ImportError("pip install datasets for GPTQ calibration")
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+    traindata = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
+    trainenc = tokenizer("\n\n".join(traindata["text"]), return_tensors="pt")
+    import random
+    random.seed(seed)
+    dataloader = []
+    for _ in range(nsamples):
+        i = random.randint(0, trainenc.input_ids.shape[1] - seqlen - 1)
+        j = i + seqlen
+        inp = trainenc.input_ids[:, i:j]
+        dataloader.append((inp,))
+    return dataloader
 
 class FLH_LlamaConfig(LlamaConfig):
     model_type = "flh_llama"
@@ -264,7 +396,7 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
             )
     
     @classmethod
-    def from_float(cls, float_model, target_device="cuda", weight_bits=4, weight_group_size=128, act_bits=4, act_group_size=128, weight_sym=False, act_sym=True, save_quantized_path=None):
+    def from_float(cls, float_model, target_device="cuda", weight_bits=4, weight_group_size=128, act_bits=4, act_group_size=128, weight_sym=False, act_sym=True, save_quantized_path=None, use_gptq=False, calibration_dataloader=None, gptq_nsamples=128, gptq_percdamp=0.01, gptq_actorder=False):
         """
         Convert a standard LlamaForCausalLM model to FLH_LlamaForCausalLM with quantization.
         
@@ -278,6 +410,11 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
             weight_sym: Whether to use symmetric quantization for weights (default: False)
             act_sym: Whether to use symmetric quantization for activations (default: True)
             save_quantized_path: Optional path to save quantized model before moving to GPU (default: None)
+            use_gptq: Use GPTQ for weight quantization (higher accuracy, requires calibration)
+            calibration_dataloader: DataLoader for GPTQ calibration (required when use_gptq=True)
+            gptq_nsamples: Number of calibration samples for GPTQ (default: 128)
+            gptq_percdamp: Damping factor for GPTQ (default: 0.01)
+            gptq_actorder: Use activation order for GPTQ (default: False)
             
         Returns:
             FLH_LlamaForCausalLM model with quantized weights in half precision
@@ -321,16 +458,68 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
         flh_model.model.norm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         flh_model.model.norm.weight.data.copy_(float_model.model.norm.weight.data)
         
-        # Copy and quantize layer weights with progress bar
         num_layers = len(flh_model.model.layers)
+        seqlen = getattr(float_model, "seqlen", 2048)
+
+        def _quantize_linear(float_linear, use_gptq_layer, gptq_data):
+            in_f, out_f = float_linear.in_features, float_linear.out_features
+            bias = float_linear.bias is not None
+            dtype = float_linear.weight.dtype
+            cal_device = target_device if target_device != "cpu" else "cuda" if torch.cuda.is_available() else "cpu"
+
+            if use_gptq_layer and gptq_data is not None and len(gptq_data) > 0:
+                tmp_linear = nn.Linear(in_f, out_f, bias=bias, device=cal_device, dtype=dtype)
+                tmp_linear.weight.data.copy_(float_linear.weight.data.to(cal_device))
+                if bias:
+                    tmp_linear.bias.data.copy_(float_linear.bias.data.to(cal_device))
+
+                gptq = flh.nn.FLHGPTQ(tmp_linear)
+                for inp in gptq_data:
+                    if inp is not None and inp.numel() > 0:
+                        gptq.add_batch(inp.to(cal_device), None, group_size=weight_group_size if weight_group_size > 0 else -1)
+                gptq.fasterquant(
+                    group_size=weight_group_size,
+                    blocksize=128,
+                    percdamp=gptq_percdamp,
+                    actorder=gptq_actorder,
+                    sym=weight_sym,
+                    bits=weight_bits,
+                )
+                gptq.free()
+
+                flh_linear = flh.nn.LinearFLH(in_f, out_f, bias=bias, dtype=dtype, device="cpu")
+                flh_linear.weight.copy_(tmp_linear.weight.data.cpu())
+                if bias:
+                    flh_linear.bias.copy_(tmp_linear.bias.data.cpu())
+                del tmp_linear, gptq
+            else:
+                flh_linear = flh.nn.LinearFLH.from_float(
+                    float_linear,
+                    weight_bits=weight_bits,
+                    weight_group_size=weight_group_size,
+                    weight_sym=weight_sym
+                )
+            return flh_linear
+
+        calibration_data = None
+        if use_gptq and calibration_dataloader is not None:
+            print("  - GPTQ calibration (collecting activations)...")
+            cal_device = target_device if target_device != "cpu" else "cuda" if torch.cuda.is_available() else "cpu"
+            cal_seqlen = calibration_dataloader[0][0].shape[1] if calibration_dataloader else seqlen
+            calibration_data = _collect_calibration_inputs(
+                float_model, calibration_dataloader, cal_device, gptq_nsamples, cal_seqlen
+            )
+            torch.cuda.empty_cache()
+            print(f"  - Calibration complete, quantizing {num_layers} layers with GPTQ...")
+        elif use_gptq:
+            print("  - Warning: use_gptq=True but no calibration_dataloader, falling back to RTN quantization")
+
         print(f"  - Copying and quantizing {num_layers} transformer layers...")
-        
         for layer_idx, (flh_layer, float_layer) in enumerate(tqdm(
             zip(flh_model.model.layers, float_model.model.layers),
             total=num_layers,
             desc="  Quantizing layers"
         )):
-            # Replace attention with quantized version
             flh_layer.self_attn = FLH_LlamaAttention(
                 config=config,
                 layer_idx=layer_idx,
@@ -338,62 +527,27 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                 act_group_size=act_group_size,
                 act_sym=act_sym
             )
-            
-            # Quantize attention weights using LinearFLH.from_float
-            flh_layer.self_attn.q_proj = flh.nn.LinearFLH.from_float(
-                float_layer.self_attn.q_proj,
-                weight_bits=weight_bits,
-                weight_group_size=weight_group_size,
-                weight_sym=weight_sym
-            )
-            flh_layer.self_attn.k_proj = flh.nn.LinearFLH.from_float(
-                float_layer.self_attn.k_proj,
-                weight_bits=weight_bits,
-                weight_group_size=weight_group_size,
-                weight_sym=weight_sym
-            )
-            flh_layer.self_attn.v_proj = flh.nn.LinearFLH.from_float(
-                float_layer.self_attn.v_proj,
-                weight_bits=weight_bits,
-                weight_group_size=weight_group_size,
-                weight_sym=weight_sym
-            )
-            flh_layer.self_attn.o_proj = flh.nn.LinearFLH.from_float(
-                float_layer.self_attn.o_proj,
-                weight_bits=weight_bits,
-                weight_group_size=weight_group_size,
-                weight_sym=weight_sym
-            )
-            
-            # Replace MLP with quantized version
+
+            cal = calibration_data.get(layer_idx, {}) if calibration_data else {}
+            qkv_inps = cal.get("self_attn.q_proj", []) or cal.get("self_attn.k_proj", []) or cal.get("self_attn.v_proj", [])
+
+            flh_layer.self_attn.q_proj = _quantize_linear(float_layer.self_attn.q_proj, use_gptq, qkv_inps)
+            flh_layer.self_attn.k_proj = _quantize_linear(float_layer.self_attn.k_proj, use_gptq, qkv_inps)
+            flh_layer.self_attn.v_proj = _quantize_linear(float_layer.self_attn.v_proj, use_gptq, qkv_inps)
+            flh_layer.self_attn.o_proj = _quantize_linear(float_layer.self_attn.o_proj, use_gptq, cal.get("self_attn.o_proj", []))
+
             flh_layer.mlp = FLH_LlamaMLP(
                 config=config,
                 act_bits=act_bits,
                 act_group_size=act_group_size,
                 act_sym=act_sym
             )
-            
-            # Quantize MLP weights using LinearFLH.from_float
-            flh_layer.mlp.gate_proj = flh.nn.LinearFLH.from_float(
-                float_layer.mlp.gate_proj,
-                weight_bits=weight_bits,
-                weight_group_size=weight_group_size,
-                weight_sym=weight_sym
-            )
-            flh_layer.mlp.up_proj = flh.nn.LinearFLH.from_float(
-                float_layer.mlp.up_proj,
-                weight_bits=weight_bits,
-                weight_group_size=weight_group_size,
-                weight_sym=weight_sym
-            )
-            flh_layer.mlp.down_proj = flh.nn.LinearFLH.from_float(
-                float_layer.mlp.down_proj,
-                weight_bits=weight_bits,
-                weight_group_size=weight_group_size,
-                weight_sym=weight_sym
-            )
-            
-            # Replace and copy layer norms
+            gate_up_inps = cal.get("mlp.gate_proj", []) or cal.get("mlp.up_proj", [])
+
+            flh_layer.mlp.gate_proj = _quantize_linear(float_layer.mlp.gate_proj, use_gptq, gate_up_inps)
+            flh_layer.mlp.up_proj = _quantize_linear(float_layer.mlp.up_proj, use_gptq, gate_up_inps)
+            flh_layer.mlp.down_proj = _quantize_linear(float_layer.mlp.down_proj, use_gptq, cal.get("mlp.down_proj", []))
+
             flh_layer.input_layernorm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
             flh_layer.post_attention_layernorm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
             flh_layer.input_layernorm.weight.data.copy_(float_layer.input_layernorm.weight.data)
@@ -429,7 +583,15 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
         """
         import os
         os.makedirs(save_directory, exist_ok=True)
-        
+
+        try:
+            stat = os.statvfs(os.path.dirname(os.path.abspath(save_directory)))
+            free_gb = (stat.f_bavail * stat.f_frsize) / (1024**3)
+            if free_gb < 15:
+                print(f"  ⚠️ Warning: Low disk space ({free_gb:.1f} GB free). LLaMA-7B needs ~14GB. Save may fail.")
+        except (OSError, AttributeError):
+            pass
+
         print(f"Saving quantized model to {save_directory} (FP16 format)...")
         
         # 检查模型是否在CPU上
@@ -448,16 +610,22 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
             if state_dict[key].dtype == torch.float32:
                 state_dict[key] = state_dict[key].half()
         
-        # 使用优化的保存方式
-        # 1. 使用 pickle_protocol=4 以支持大文件
-        # 2. 使用 _use_new_zipfile_serialization=True 以提高速度
-        torch.save(
-            state_dict, 
-            os.path.join(save_directory, "model.pt"),
-            pickle_protocol=4,
-            _use_new_zipfile_serialization=True
-        )
-        
+        # 保存模型权重（FP16，CPU）
+        # 优先使用 legacy 格式，新 zip 格式在某些环境下可能写入失败
+        model_path = os.path.join(save_directory, "model.pt")
+        try:
+            torch.save(state_dict, model_path, pickle_protocol=4)
+        except RuntimeError as e:
+            err_msg = str(e).lower()
+            if "file write failed" in err_msg or "unexpected pos" in err_msg:
+                raise RuntimeError(
+                    f"Failed to save model to {save_directory}. "
+                    "Likely causes: disk full, quota exceeded, or permission issues. "
+                    "Check disk space with 'df -h' and try a path with more space (LLaMA-7B needs ~14GB). "
+                    f"Original error: {e}"
+                ) from e
+            raise
+
         print(f"  ✓ Weights saved (FP16, CPU)")
         
         # 保存配置

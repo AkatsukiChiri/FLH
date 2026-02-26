@@ -37,24 +37,32 @@ def get_hadK(n: int, transpose=False):
     return hadK, K
 
 
-def had_transform(X: torch.Tensor, transpose=False):
+def had_transform(X: torch.Tensor, transpose=False, start_row: int = 0):
     """
     全局Hadamard变换（用于非分组情况）
     
     :param X: 输入张量
     :param transpose: 是否转置（Hadamard矩阵是对称的，所以这个参数实际上不影响结果）
+    :param start_row: 蝶形变换起始行索引a，变换顺序为：第a行到第n-1行，然后第0行到第a-1行
     :return: 变换后的张量
     """
     n = X.shape[-1]
     if (n & (n - 1)) != 0:
         raise ValueError(f"n must be a power of 2 for Hadamard transform, got {n}")
-    
+    if start_row < 0 or start_row >= n:
+        raise ValueError(f"start_row must be in [0, n-1], got {start_row}")
+
     hadK, K = get_hadK(n, transpose)
-    
+
     input_shape = X.shape
     input = X.clone().view(-1, n, 1)
+
+    # 从第a行开始蝶形变换：先循环移位使 [a, a+1, ..., n-1, 0, 1, ..., a-1]
+    if start_row != 0:
+        input = torch.roll(input, -start_row, dims=1)
+
     output = input.clone()
-    
+
     # 蝶形变换
     while input.shape[1] > K:
         input = input.view(input.shape[0], input.shape[1]//2, 2, input.shape[2])
@@ -63,35 +71,50 @@ def had_transform(X: torch.Tensor, transpose=False):
         output[:, :, 1, :] = input[:, :, 0, :] - input[:, :, 1, :]
         output = output.view(input.shape[0], input.shape[1], -1)
         input, output = output, input
-    
+
     del output
-    
+
     if hadK is not None and K > 1:
         input = hadK.view(1, K, K).to(input) @ input
-    
-    return input.view(input_shape) / torch.tensor(n).sqrt()
+
+    result = input.view(input_shape) / torch.tensor(n).sqrt()
+
+    # 逆循环移位，恢复原始索引顺序
+    if start_row != 0:
+        result = torch.roll(result, start_row, dims=-1)
+
+    return result
 
 
-def had_transform_group(X: torch.Tensor, transpose=False, group_size: int = 128):
+def had_transform_group(X: torch.Tensor, transpose=False, group_size: int = 128, start_row: int = 0):
     """
     分组Hadamard变换（高效实现）
-    
+
     :param X: 输入张量，shape为(..., n)
     :param transpose: 是否转置（Hadamard矩阵是对称的）
     :param group_size: 分组大小（必须是2的幂）
+    :param start_row: 每组内蝶形变换起始行索引a，变换顺序为：第a行到第n-1行，然后第0行到第a-1行
     :return: 变换后的张量
     """
     n = X.shape[-1]
     if n % group_size != 0:
-        return had_transform(X, transpose)
-    
+        return had_transform(X, transpose, start_row)
+
     n = group_size
+    if start_row < 0 or start_row >= n:
+        raise ValueError(f"start_row must be in [0, group_size-1], got {start_row}")
+
     hadK, K = get_hadK(n, transpose)
     group_num = X.shape[-1] // n
     input = X.clone().view(-1, group_num, n, 1)
     input = input.transpose(0, 1)
+
+    # 从第a行开始蝶形变换：先循环移位
+    if start_row != 0:
+        input = torch.roll(input, -start_row, dims=2)
+
     output = input.clone()
-    
+
     # 蝶形变换
     while input.shape[2] > K:
         input = input.view(group_num, input.shape[1], input.shape[2]//2, 2, input.shape[3])
@@ -100,30 +123,36 @@ def had_transform_group(X: torch.Tensor, transpose=False, group_size: int = 128)
         output[:, :, :, 1, :] = input[:, :, :, 0, :] - input[:, :, :, 1, :]
         output = output.view(group_num, input.shape[1], input.shape[2], -1)
         input, output = output, input
-    
+
     del output
-    
+
     if hadK is not None and K > 1:
         input = hadK.view(1, K, K).to(input) @ input
-    
+
     input = input.transpose(0, 1)
-    
-    return input.view(X.shape) / torch.tensor(n).sqrt()
+    result = input.view(X.shape) / torch.tensor(n).sqrt()
+
+    # 逆循环移位，恢复原始索引顺序
+    if start_row != 0:
+        result = torch.roll(result, start_row, dims=-1)
+
+    return result
 
 
-def fast_hadamard_transform(x, group_size=None, normalize=True):
+def fast_hadamard_transform(x, group_size=None, normalize=True, start_row: int = 0):
     """
     快速Walsh-Hadamard变换统一接口
-    
+
     :param x: 输入张量，shape为(..., n)
     :param group_size: 分组大小（如果指定则使用分组变换）
     :param normalize: 是否归一化（已在内部实现，此参数保持兼容性）
+    :param start_row: 蝶形变换起始行索引a，变换顺序为：第a行到第n-1行，然后第0行到第a-1行
     :return: 变换后的张量
     """
     if group_size is not None and group_size > 0:
-        return had_transform_group(x, transpose=False, group_size=group_size)
+        return had_transform_group(x, transpose=False, group_size=group_size, start_row=start_row)
     else:
-        return had_transform(x, transpose=False)
+        return had_transform(x, transpose=False, start_row=start_row)
 
 
 
@@ -495,7 +524,10 @@ Quantizer = ActQuantizer
 
 if __name__ == '__main__':
     A = torch.randn(1024, 1024)
-    A_had = fast_hadamard_transform(A, group_size=128)
-    A_had_had = fast_hadamard_transform(A_had, group_size=128)
+    A[:, 2] += 100
+    A_had = had_transform(A, start_row=2)
+    A_had_had = had_transform(A_had, start_row=2)
     print(A_had_had)
+    print(A_had)
+    print(A_had.max(), A_had.min())
     print(A)

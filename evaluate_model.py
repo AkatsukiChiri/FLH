@@ -50,7 +50,7 @@ def load_original_model(model_name_or_path, device="cuda", dtype=torch.float16, 
     return model
 
 
-def load_model_and_tokenizer(model_name_or_path, device="cuda", dtype=torch.float16, attn_implementation="flash_attention_2", use_quantized=False, load_quantized_path=None, save_quantized_path=None, weight_sym=False, act_sym=True):
+def load_model_and_tokenizer(model_name_or_path, device="cuda", dtype=torch.float16, attn_implementation="flash_attention_2", use_quantized=False, load_quantized_path=None, save_quantized_path=None, weight_sym=False, act_sym=True, use_gptq=False):
     """Load model and tokenizer
     
     Args:
@@ -101,12 +101,16 @@ def load_model_and_tokenizer(model_name_or_path, device="cuda", dtype=torch.floa
     # Convert to FLH model using from_float (conversion happens on CPU)
     if use_quantized:
         print("  Converting to FLH_LlamaForCausalLM (quantized) using from_float...")
+        from flh.quantized_model.modeling_llama import get_calibration_dataloader
+        cal_loader = get_calibration_dataloader(model_name_or_path, nsamples=32, seqlen=512) if use_gptq else None
         model = FLH_LlamaForCausalLM.from_float(
             original_model, 
             target_device=device,
             weight_sym=weight_sym,
             act_sym=act_sym,
-            save_quantized_path=save_quantized_path  # 量化后立即保存（在移到GPU之前）
+            save_quantized_path=save_quantized_path,
+            use_gptq=use_gptq,
+            calibration_dataloader=cal_loader,
         )
         
         # 如果保存了模型，也保存tokenizer
@@ -455,6 +459,11 @@ def main():
         help="Use quantized FLH_LlamaForCausalLM instead of FP16 version"
     )
     parser.add_argument(
+        "--use-gptq",
+        action="store_true",
+        help="Use GPTQ for weight quantization (higher accuracy, requires calibration on WikiText2)"
+    )
+    parser.add_argument(
         "--compare-with-original",
         action="store_true",
         default=True,
@@ -573,7 +582,8 @@ def main():
                 use_quantized=args.quantized,
                 load_quantized_path=args.load_quantized,
                 weight_sym=args.weight_sym,
-                act_sym=args.act_sym
+                act_sym=args.act_sym,
+                use_gptq=args.use_gptq,
             )
         else:
             # 否则从原始模型量化（慢），可选择保存
@@ -585,7 +595,8 @@ def main():
                 use_quantized=args.quantized,
                 save_quantized_path=args.save_quantized,  # 量化完立即保存（在CPU上）
                 weight_sym=args.weight_sym,
-                act_sym=args.act_sym
+                act_sym=args.act_sym,
+                use_gptq=args.use_gptq,
             )
         
         # Evaluate FLH model

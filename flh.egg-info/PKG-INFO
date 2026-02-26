@@ -1,0 +1,19 @@
+Metadata-Version: 2.4
+Name: flh
+Version: 0.1.0
+Summary: FLH - Fast Linear Hadamard quantization library
+Requires-Python: >=3.7
+Requires-Dist: torch>=1.9.0
+Requires-Dist: transformers>=4.30.0
+Requires-Dist: tqdm>=4.60.0
+Requires-Dist: datasets>=2.0.0
+Provides-Extra: eval
+Requires-Dist: lm-eval>=0.4.0; extra == "eval"
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: black>=22.0.0; extra == "dev"
+Requires-Dist: flake8>=4.0.0; extra == "dev"
+Dynamic: provides-extra
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
