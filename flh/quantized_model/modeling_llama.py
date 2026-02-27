@@ -17,11 +17,6 @@ ALL_LAYERNORM_LAYERS = [flh.nn.RMSNorm]
 
 
 def _collect_calibration_inputs(model, dataloader, device, nsamples, seqlen):
-    """
-    Run model on calibration data and collect inputs to each linear layer.
-    Keeps model on CPU, moving only necessary parts to GPU per step to save memory.
-    Returns: {layer_idx: {linear_name: [list of input tensors]}} (tensors on CPU)
-    """
     model.eval()
     model.config.use_cache = False
     if not hasattr(model, "seqlen"):
@@ -122,26 +117,18 @@ def _collect_calibration_inputs(model, dataloader, device, nsamples, seqlen):
 
 
 def get_calibration_dataloader(model_name_or_path, nsamples=32, seqlen=512, seed=0):
-    """
-    Create calibration dataloader from WikiText2 train split (for GPTQ).
-    Returns list of (input_ids,) tuples.
-    """
-    try:
-        from datasets import load_dataset
-    except ImportError:
-        raise ImportError("pip install datasets for GPTQ calibration")
+    from datasets import load_dataset
     from transformers import AutoTokenizer
-
+    import random
+    
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
     traindata = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
     trainenc = tokenizer("\n\n".join(traindata["text"]), return_tensors="pt")
-    import random
     random.seed(seed)
     dataloader = []
     for _ in range(nsamples):
         i = random.randint(0, trainenc.input_ids.shape[1] - seqlen - 1)
-        j = i + seqlen
-        inp = trainenc.input_ids[:, i:j]
+        inp = trainenc.input_ids[:, i:i + seqlen]
         dataloader.append((inp,))
     return dataloader
 
@@ -149,7 +136,6 @@ class FLH_LlamaConfig(LlamaConfig):
     model_type = "flh_llama"
 
 class FLH_FP16LlamaAttention(LlamaFlashAttention2):
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.quantizer = torch.nn.Identity()
@@ -249,61 +235,36 @@ class FLH_FP16LlamaAttention(LlamaFlashAttention2):
         attn_output = attn_output.reshape(bsz, q_len, -1).contiguous()
         attn_output = self.quantizer(attn_output)
         attn_output = self.o_proj(attn_output)
-
-        if not output_attentions:
-            attn_weights = None
-
-        return attn_output, attn_weights, past_key_value
+        return attn_output, None if not output_attentions else None, past_key_value
     
 class FLH_LlamaAttention(FLH_FP16LlamaAttention):
     def __init__(self, *args, act_bits=16, act_group_size=-1, act_sym=True, **kwargs):
         super().__init__(*args, **kwargs)
-        # Activation quantizer (可配置对称/非对称量化)
         self.quantizer = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym)
         
 class FLH_LlamaMLP(LlamaMLP):
     def __init__(self, *args, act_bits=16, act_group_size=-1, act_sym=True, **kwargs):
         super().__init__(*args, **kwargs)
-        # Activation quantizer (可配置对称/非对称量化)
         self.quantizer = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym)
         
     def forward(self, x):
-        # Apply activation quantization if needed
         x = self.quantizer(x)
-        
         x = self.act_fn(self.gate_proj(x)) * self.up_proj(x)
         x = self.quantizer(x)
         return self.down_proj(x)
     
 class FLH_FP16LlamaForCausalLM(LlamaForCausalLM):
-    """
-    FLH FP16 Llama model using transformers' native KV cache.
-    This version uses DynamicCache instead of custom paged cache.
-    """
     def __init__(self, config):
         super().__init__(config)
         assert config._attn_implementation == "flash_attention_2"
-        # Replace attention modules with FLH versions
         for layer_idx, layer in enumerate(self.model.layers):
             layer.self_attn = FLH_FP16LlamaAttention(config=config, layer_idx=layer_idx)
     
     @classmethod
     def from_float(cls, float_model, target_device="cuda"):
-        """
-        Convert a standard LlamaForCausalLM model to FLH_FP16LlamaForCausalLM.
-        
-        Args:
-            float_model: A LlamaForCausalLM model instance (can be on CPU or GPU)
-            target_device: Target device for the converted model (default: "cuda")
-            
-        Returns:
-            FLH_FP16LlamaForCausalLM model with copied weights in half precision
-        """
-        # Create a new FLH model with the same config on CPU first
         config = float_model.config
         config._attn_implementation = "flash_attention_2"
         
-        # Set default dtype to half for model initialization
         dtype_old = torch.get_default_dtype()
         torch.set_default_dtype(torch.float16)
         
@@ -311,20 +272,15 @@ class FLH_FP16LlamaForCausalLM(LlamaForCausalLM):
         flh_model = cls(config)
         
         torch.set_default_dtype(dtype_old)
-        
-        # Ensure model is in half precision and on CPU for weight copying
         flh_model = flh_model.half().cpu()
         
         print("Copying weights from original model to FLH model (on CPU)...")
         
-        # Copy weights from float model to FLH model
-        # Copy embedding and lm_head
         print("  - Copying embedding and lm_head...")
         flh_model.model.embed_tokens.load_state_dict(float_model.model.embed_tokens.state_dict())
         flh_model.lm_head.load_state_dict(float_model.lm_head.state_dict())
         flh_model.model.norm.load_state_dict(float_model.model.norm.state_dict())
         
-        # Copy layer weights with progress bar
         num_layers = len(flh_model.model.layers)
         print(f"  - Copying {num_layers} transformer layers...")
         for layer_idx, (flh_layer, float_layer) in enumerate(tqdm(
@@ -332,24 +288,20 @@ class FLH_FP16LlamaForCausalLM(LlamaForCausalLM):
             total=num_layers,
             desc="  Copying layers"
         )):
-            # Copy attention weights
             flh_layer.self_attn.q_proj.load_state_dict(float_layer.self_attn.q_proj.state_dict())
             flh_layer.self_attn.k_proj.load_state_dict(float_layer.self_attn.k_proj.state_dict())
             flh_layer.self_attn.v_proj.load_state_dict(float_layer.self_attn.v_proj.state_dict())
             flh_layer.self_attn.o_proj.load_state_dict(float_layer.self_attn.o_proj.state_dict())
             
-            # Copy MLP weights
             flh_layer.mlp.gate_proj.load_state_dict(float_layer.mlp.gate_proj.state_dict())
             flh_layer.mlp.up_proj.load_state_dict(float_layer.mlp.up_proj.state_dict())
             flh_layer.mlp.down_proj.load_state_dict(float_layer.mlp.down_proj.state_dict())
             
-            # Copy layer norms
             flh_layer.input_layernorm.load_state_dict(float_layer.input_layernorm.state_dict())
             flh_layer.post_attention_layernorm.load_state_dict(float_layer.post_attention_layernorm.state_dict())
         
         print("✓ Weight copying completed!")
         
-        # Move model to target device
         if target_device != "cpu":
             print(f"  Moving model to {target_device}...")
             flh_model = flh_model.to(device=target_device)
@@ -358,13 +310,7 @@ class FLH_FP16LlamaForCausalLM(LlamaForCausalLM):
         return flh_model
 
 class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
-    """
-    Fully quantized FLH Llama model with configurable weight and activation quantization.
-    Uses transformers' native KV cache.
-    """
     def __init__(self, config, weight_bits=4, weight_group_size=128, act_bits=16, act_group_size=-1):
-        # Don't call super().__init__ to avoid double initialization
-        # Instead, manually initialize LlamaForCausalLM
         LlamaForCausalLM.__init__(self, config)
         assert config._attn_implementation == "flash_attention_2"
         
@@ -373,7 +319,6 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
         self.act_bits = act_bits
         self.act_group_size = act_group_size
         
-        # Replace with quantized versions
         self.model.norm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         
         print(f"Initializing FLH_LlamaForCausalLM with:")
@@ -573,14 +518,6 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
         return flh_model
     
     def save_quantized(self, save_directory):
-        """
-        保存量化后的模型（FP16格式），使用优化的格式避免下次重新量化
-        
-        注意：模型应该在CPU上调用此方法以确保稳定性
-        
-        Args:
-            save_directory: 保存目录
-        """
         import os
         os.makedirs(save_directory, exist_ok=True)
 
@@ -594,24 +531,18 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
 
         print(f"Saving quantized model to {save_directory} (FP16 format)...")
         
-        # 检查模型是否在CPU上
         device = next(self.parameters()).device
         if device.type != "cpu":
             print(f"  ⚠️ Warning: Model is on {device}, moving to CPU for saving...")
             self.cpu()
         
-        # 确保是FP16
         self.half()
         
-        # 保存模型权重（FP16，CPU）- 使用优化选项
         state_dict = self.state_dict()
-        # 确保所有权重都是FP16
         for key in state_dict:
             if state_dict[key].dtype == torch.float32:
                 state_dict[key] = state_dict[key].half()
         
-        # 保存模型权重（FP16，CPU）
-        # 优先使用 legacy 格式，新 zip 格式在某些环境下可能写入失败
         model_path = os.path.join(save_directory, "model.pt")
         try:
             torch.save(state_dict, model_path, pickle_protocol=4)
@@ -628,10 +559,8 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
 
         print(f"  ✓ Weights saved (FP16, CPU)")
         
-        # 保存配置
         self.config.save_pretrained(save_directory)
         
-        # 保存量化配置
         quant_config = {
             "weight_bits": self.weight_bits,
             "weight_group_size": self.weight_group_size,
@@ -639,7 +568,7 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
             "act_group_size": self.act_group_size,
             "weight_sym": self.weight_sym,
             "act_sym": self.act_sym,
-            "dtype": "float16",  # 标记存储格式
+            "dtype": "float16",
         }
         import json
         with open(os.path.join(save_directory, "quantization_config.json"), "w") as f:
@@ -649,72 +578,51 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
     
     @classmethod
     def load_quantized(cls, load_directory, target_device="cuda"):
-        """
-        加载已量化的模型（FP16格式），快速恢复
-        
-        Args:
-            load_directory: 模型目录
-            target_device: 目标设备
-        
-        Returns:
-            加载的FLH_LlamaForCausalLM模型（FP16）
-        """
         import os
         import json
         from transformers import AutoConfig
         
         print(f"Loading quantized model from {load_directory} (FP16 format)...")
         
-        # 加载配置
         config = AutoConfig.from_pretrained(load_directory)
         config._attn_implementation = "flash_attention_2"
         
-        # 加载量化配置
         with open(os.path.join(load_directory, "quantization_config.json"), "r") as f:
             quant_config = json.load(f)
         
-        # 读取对称/非对称量化配置（向后兼容）
         weight_sym = quant_config.get("weight_sym", False)
         act_sym = quant_config.get("act_sym", True)
         
         print(f"  Quantization config: W{quant_config['weight_bits']}G{quant_config['weight_group_size']}{'_sym' if weight_sym else '_asym'} / "
               f"A{quant_config['act_bits']}G{quant_config['act_group_size']}{'_sym' if act_sym else '_asym'}")
         
-        # 确保dtype是FP16
         if quant_config.get("dtype", "float16") != "float16":
             print(f"  ⚠ Warning: Model was saved with dtype={quant_config.get('dtype')}, converting to float16")
         
-        # ⚠️ 重要：先加载到CPU，完成所有初始化后再移动到GPU
         print(f"  Loading model weights to CPU...")
         
-        # 使用 mmap 加速大文件加载（PyTorch 1.13+支持mmap）
-        load_kwargs = {"map_location": "cpu"}  # 始终先加载到CPU
+        load_kwargs = {"map_location": "cpu"}
         try:
-            # 尝试使用 mmap（需要 PyTorch 1.13+）
             state_dict = torch.load(
                 os.path.join(load_directory, "model.pt"), 
                 mmap=True,
                 **load_kwargs
             )
         except TypeError:
-            # 旧版本PyTorch不支持mmap参数
             state_dict = torch.load(
                 os.path.join(load_directory, "model.pt"),
                 **load_kwargs
             )
         
-        # 确保加载的权重是FP16
         for key in list(state_dict.keys()):
             if state_dict[key].dtype == torch.float32:
                 print(f"  ⚠ Converting {key} from float32 to float16")
                 state_dict[key] = state_dict[key].half()
         
-        # ⚡ 优化：创建模型时使用 meta device，避免初始化开销（PyTorch 1.10+）
         print("  Creating model structure...")
         dtype_old = torch.get_default_dtype()
         torch.set_default_dtype(torch.float16)
         
-        # 尝试使用 meta device（需要 PyTorch 1.10+）
         use_meta = hasattr(torch, 'device') and 'meta' in dir(torch)
         if use_meta:
             try:
@@ -725,7 +633,6 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                 use_meta = False
         
         if not use_meta:
-            # 回退到普通初始化
             flh_model = cls.__new__(cls)
             LlamaForCausalLM.__init__(flh_model, config)
         
@@ -738,11 +645,9 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
         
         torch.set_default_dtype(dtype_old)
         
-        # 替换为FLH组件（批量替换以提高速度）
         print("  Replacing with FLH components...")
         flh_model.model.norm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         
-        # 批量创建所有层（减少循环开销）
         num_layers = len(flh_model.model.layers)
         for layer_idx in range(num_layers):
             layer = flh_model.model.layers[layer_idx]
@@ -762,19 +667,14 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                 act_sym=act_sym
             )
         
-        # 加载权重到模型（在CPU上）
         print("  Loading weights to model (on CPU)...")
         try:
-            # PyTorch 2.0+ 支持 assign=True
             flh_model.load_state_dict(state_dict, assign=True, strict=False)
         except TypeError:
-            # 旧版本回退
             flh_model.load_state_dict(state_dict, strict=False)
         
-        # 确保整个模型是FP16
         flh_model.half()
         
-        # ⚡ 关键：所有模块都初始化完成后，统一移动到目标设备
         if target_device != "cpu":
             print(f"  Moving complete model to {target_device}...")
             flh_model = flh_model.to(device=target_device)

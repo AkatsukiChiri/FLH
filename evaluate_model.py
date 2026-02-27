@@ -1,15 +1,4 @@
 #!/usr/bin/env python3
-"""
-Evaluation script for FLH models on various benchmarks.
-
-This script evaluates:
-1. Perplexity on WikiText2
-2. Accuracy on common NLP benchmarks (optional, requires lm-evaluation-harness)
-
-Usage:
-    python evaluate_model.py --model meta-llama/Llama-2-7b-hf --tasks wikitext
-    python evaluate_model.py --model meta-llama/Llama-2-7b-hf --tasks all
-"""
 
 import argparse
 import gc
@@ -28,7 +17,6 @@ from flh.quantized_model.modeling_llama import FLH_FP16LlamaForCausalLM, FLH_Lla
 
 
 def load_original_model(model_name_or_path, device="cuda", dtype=torch.float16, attn_implementation="flash_attention_2"):
-    """Load original LlamaForCausalLM model"""
     print(f"Loading original LlamaForCausalLM from {model_name_or_path}...")
     from transformers import LlamaForCausalLM
     
@@ -51,18 +39,6 @@ def load_original_model(model_name_or_path, device="cuda", dtype=torch.float16, 
 
 
 def load_model_and_tokenizer(model_name_or_path, device="cuda", dtype=torch.float16, attn_implementation="flash_attention_2", use_quantized=False, load_quantized_path=None, save_quantized_path=None, weight_sym=False, act_sym=True, use_gptq=False):
-    """Load model and tokenizer
-    
-    Args:
-        model_name_or_path: Path to original model
-        device: Target device
-        dtype: Data type
-        attn_implementation: Attention implementation
-        use_quantized: Whether to use quantized model
-        load_quantized_path: Path to pre-quantized model (fast loading)
-        save_quantized_path: Path to save quantized model after quantization
-    """
-    # 如果指定了加载路径，直接加载已量化的模型（快速）
     if load_quantized_path:
         print(f"Loading pre-quantized model from {load_quantized_path}...")
         model = FLH_LlamaForCausalLM.load_quantized(load_quantized_path, target_device=device)
@@ -71,18 +47,15 @@ def load_model_and_tokenizer(model_name_or_path, device="cuda", dtype=torch.floa
         print("✓ Pre-quantized model loaded successfully (fast!)")
         return model, tokenizer
     
-    # 否则，从原始模型加载
     print(f"Loading model from {model_name_or_path}...")
     
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
     
-    # Note: FLH_FP16LlamaForCausalLM requires flash_attention_2
     if attn_implementation != "flash_attention_2":
         print(f"⚠ Warning: FLH_FP16LlamaForCausalLM requires flash_attention_2, but {attn_implementation} was specified.")
         print(f"  Forcing flash_attention_2...")
         attn_implementation = "flash_attention_2"
     
-    # Load original Llama model on CPU to avoid OOM
     print("  Loading original LlamaForCausalLM on CPU (to avoid OOM)...")
     from transformers import LlamaForCausalLM
     
@@ -93,12 +66,11 @@ def load_model_and_tokenizer(model_name_or_path, device="cuda", dtype=torch.floa
         model_name_or_path,
         torch_dtype=torch.float16,
         attn_implementation=attn_implementation,
-        device_map="cpu"  # Load on CPU first
+        device_map="cpu"
     )
     
     torch.set_default_dtype(dtype_old)
     
-    # Convert to FLH model using from_float (conversion happens on CPU)
     if use_quantized:
         print("  Converting to FLH_LlamaForCausalLM (quantized) using from_float...")
         from flh.quantized_model.modeling_llama import get_calibration_dataloader
@@ -113,7 +85,6 @@ def load_model_and_tokenizer(model_name_or_path, device="cuda", dtype=torch.floa
             calibration_dataloader=cal_loader,
         )
         
-        # 如果保存了模型，也保存tokenizer
         if save_quantized_path:
             print(f"  Saving tokenizer to {save_quantized_path}...")
             tokenizer.save_pretrained(save_quantized_path)
@@ -125,7 +96,6 @@ def load_model_and_tokenizer(model_name_or_path, device="cuda", dtype=torch.floa
     
     model.eval()
     
-    # Clean up original model to save memory
     print("  Cleaning up original model from CPU memory...")
     del original_model
     torch.cuda.empty_cache()
@@ -135,11 +105,6 @@ def load_model_and_tokenizer(model_name_or_path, device="cuda", dtype=torch.floa
 
 
 def load_wikitext2(tokenizer, seq_length=2048, split="test"):
-    """
-    Load and tokenize WikiText2 dataset following GPTQ evaluation method.
-    
-    Returns tokenized data ready for evaluation.
-    """
     try:
         from datasets import load_dataset
     except ImportError:
@@ -148,10 +113,8 @@ def load_wikitext2(tokenizer, seq_length=2048, split="test"):
     print(f"Loading WikiText2 {split} split...")
     dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split=split)
     
-    # Concatenate all text
     text = "\n\n".join(dataset["text"])
     
-    # Tokenize - following GPTQ: use return_tensors='pt'
     print(f"  Tokenizing text...")
     testenc = tokenizer(text, return_tensors='pt')
     
@@ -163,28 +126,10 @@ def load_wikitext2(tokenizer, seq_length=2048, split="test"):
 
 
 def calculate_perplexity(model, testenc, device="cuda", seq_length=2048):
-    """
-    Calculate perplexity following GPTQ evaluation method.
-    
-    This implementation exactly follows the llama_eval function from GPTQ:
-    - Split data into fixed-size chunks of seq_length
-    - Calculate NLL for each chunk
-    - Sum all NLLs and compute perplexity
-    
-    Args:
-        model: The language model
-        testenc: Tokenized test data (from tokenizer with return_tensors='pt')
-        device: Device to run on
-        seq_length: Sequence length for evaluation (default: 2048)
-        
-    Returns:
-        perplexity: Token-level perplexity score
-    """
     print('Evaluating perplexity...')
     
     model.eval()
     
-    # Following GPTQ: testenc.input_ids
     testenc = testenc.input_ids
     nsamples = testenc.numel() // seq_length
     
@@ -195,16 +140,12 @@ def calculate_perplexity(model, testenc, device="cuda", seq_length=2048):
     
     nlls = []
     with torch.no_grad():
-        # Following GPTQ evaluation loop
         for i in tqdm(range(nsamples), desc="Calculating perplexity"):
-            # Get the current batch
             batch = testenc[:, (i * seq_length):((i + 1) * seq_length)]
             
-            # Forward pass
             outputs = model(batch, use_cache=False)
             lm_logits = outputs.logits
             
-            # Following GPTQ: calculate loss
             shift_logits = lm_logits[:, :-1, :].contiguous()
             shift_labels = batch[:, 1:]
             
@@ -214,16 +155,13 @@ def calculate_perplexity(model, testenc, device="cuda", seq_length=2048):
                 shift_labels.view(-1)
             )
             
-            # Following GPTQ: neg_log_likelihood = loss.float() * seq_length
             neg_log_likelihood = loss.float() * seq_length
             nlls.append(neg_log_likelihood)
             
-            # Clean up
             del outputs, lm_logits, shift_logits, shift_labels, batch
             if i % 10 == 0:
                 torch.cuda.empty_cache()
     
-    # Following GPTQ: ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * seq_length))
     ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * seq_length))
     
     print(f"  Perplexity: {ppl.item():.4f}")

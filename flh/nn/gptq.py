@@ -1,7 +1,3 @@
-"""
-GPTQ weight quantization for FLH framework.
-Operates in Hadamard domain: both weights and calibration activations are Hadamard-transformed.
-"""
 import math
 import copy
 import torch
@@ -11,14 +7,12 @@ from .quantization import fast_hadamard_transform
 
 
 def _sym_quantize(x, scale, maxq):
-    """Symmetric quantization: q = round(x/scale), clamp to [-maxq-1, maxq]"""
     scale = scale.to(x.device)
     q = torch.clamp(torch.round(x / scale), -(maxq + 1), maxq)
     return scale * q
 
 
 def _asym_quantize(x, scale, zero, maxq):
-    """Asymmetric quantization: q = round(x/scale + zero), clamp to [0, maxq]"""
     scale = scale.to(x.device)
     zero = zero.to(x.device)
     q = torch.clamp(torch.round(x / scale + zero), 0, maxq)
@@ -26,10 +20,6 @@ def _asym_quantize(x, scale, zero, maxq):
 
 
 class GPTQQuantizer:
-    """
-    Quantizer for GPTQ in Hadamard domain.
-    find_params sets scale/zero per-channel or per-group; quantize applies them.
-    """
     def __init__(self, bits, groupsize=-1, sym=True):
         self.bits = bits
         self.groupsize = groupsize
@@ -42,7 +32,6 @@ class GPTQQuantizer:
         return self.scale is not None and torch.all(self.scale != 0)
 
     def find_params(self, W, weight=True):
-        """Find scale/zero for W (already in Hadamard domain)."""
         W = W.float()
         if self.bits >= 16:
             return
@@ -84,7 +73,6 @@ class GPTQQuantizer:
             self.zero = self.zero.repeat(1, W.shape[1])
 
     def quantize(self, w, col=0):
-        """Quantize w (single column), return dequantized value. col: column index for per-group scale indexing."""
         if not self.ready():
             return w
         if self.scale.dim() == 1:
@@ -100,10 +88,6 @@ class GPTQQuantizer:
 
 
 class FLHGPTQ:
-    """
-    GPTQ for FLH: operates on Hadamard-transformed weights with Hadamard-transformed calibration data.
-    """
-
     def __init__(self, layer):
         self.layer = layer
         self.dev = layer.weight.device
@@ -114,11 +98,6 @@ class FLHGPTQ:
         self.nsamples = 0
 
     def add_batch(self, inp, out, group_size=-1):
-        """
-        Accumulate Hessian from calibration data.
-        inp: input to linear layer (batch, seq, in_features) - will apply Hadamard
-        For FLH, we need Hadamard-transformed input for correct H matrix.
-        """
         if len(inp.shape) == 2:
             inp = inp.unsqueeze(0)
         tmp = inp.shape[0] * inp.shape[1] if len(inp.shape) == 3 else inp.shape[0]
@@ -140,9 +119,6 @@ class FLHGPTQ:
         sym=True,
         bits=4,
     ):
-        """
-        Run GPTQ on Hadamard-transformed weight.
-        """
         W = self.layer.weight.data.clone().float()
         group_size = group_size if group_size > 0 and self.columns % group_size == 0 else -1
 
