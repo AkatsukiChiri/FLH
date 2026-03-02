@@ -17,6 +17,9 @@ ALL_LAYERNORM_LAYERS = [flh.nn.RMSNorm]
 
 
 def _collect_calibration_inputs(model, dataloader, device, nsamples, seqlen):
+    """
+    收集原始模型的校准输入（用于未融合的模型）
+    """
     model.eval()
     model.config.use_cache = False
     if not hasattr(model, "seqlen"):
@@ -91,6 +94,152 @@ def _collect_calibration_inputs(model, dataloader, device, nsamples, seqlen):
                 for part in name.split("."):
                     module = getattr(module, part)
                 hook, inputs_list = make_hook(name)
+                inputs_dict[name] = inputs_list
+                hooks.append(module.register_forward_hook(hook))
+
+        for j in range(nsamples):
+            with torch.no_grad():
+                outs[j] = layer(
+                    inps[j].unsqueeze(0),
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                )[0]
+
+        for h in hooks:
+            h.remove()
+
+        collected[i] = {k: v for k, v in inputs_dict.items()}
+        inps, outs = outs, inps
+        layers[i] = layer.cpu()
+        del layer
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    model.config.use_cache = True
+    return collected
+
+
+def _collect_calibration_inputs_fused(model, dataloader, device, nsamples, seqlen):
+    """
+    收集融合后模型的校准输入（考虑RMSNorm权重融合的影响）
+    """
+    model.eval()
+    model.config.use_cache = False
+    if not hasattr(model, "seqlen"):
+        model.seqlen = seqlen
+    layers = model.model.layers
+    dtype = next(model.parameters()).dtype
+
+    model.model.embed_tokens = model.model.embed_tokens.to(device)
+    model.model.norm = model.model.norm.to(device)
+    if hasattr(model.model, "rotary_emb"):
+        model.model.rotary_emb = model.model.rotary_emb.to(device)
+    layers[0] = layers[0].to(device)
+
+    cache = {"i": 0, "attention_mask": None, "position_ids": None}
+    inps = torch.zeros((nsamples, seqlen, model.config.hidden_size), dtype=dtype, device=device)
+
+    class Catcher(nn.Module):
+        def __init__(self, module):
+            super().__init__()
+            self.module = module
+        def forward(self, inp, **kwargs):
+            inps[cache["i"]] = inp
+            cache["i"] += 1
+            cache["attention_mask"] = kwargs.get("attention_mask")
+            cache["position_ids"] = kwargs.get("position_ids")
+            raise ValueError
+
+    layers[0] = Catcher(layers[0])
+    for batch in dataloader:
+        try:
+            with torch.no_grad():
+                model(batch[0].to(device))
+        except ValueError:
+            pass
+    layers[0] = layers[0].module
+
+    layers[0] = layers[0].cpu()
+    model.model.embed_tokens = model.model.embed_tokens.cpu()
+    model.model.norm = model.model.norm.cpu()
+    if hasattr(model.model, "rotary_emb"):
+        model.model.rotary_emb = model.model.rotary_emb.cpu()
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    attention_mask = cache["attention_mask"]
+    position_ids = cache["position_ids"]
+
+    # 对于融合后的模型，我们需要模拟融合后的计算流
+    sequential = [
+        ["self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj"],  # 这些已经融合了input_layernorm
+        ["self_attn.o_proj"],
+        ["mlp.gate_proj", "mlp.up_proj"],  # 这些已经融合了post_attention_layernorm
+        ["mlp.down_proj"],
+    ]
+
+    collected = {}
+    outs = torch.zeros_like(inps)
+
+    for i in range(len(layers)):
+        layer = layers[i].to(device)
+        
+        # 获取原始的layernorm权重用于模拟融合后的输入
+        input_norm_weight = layer.input_layernorm.weight.data
+        post_norm_weight = layer.post_attention_layernorm.weight.data
+
+        def make_fused_hook(name, norm_weight):
+            """创建考虑权重融合和Hadamard变换的hook"""
+            inputs_list = []
+            def hook(module, inp, out):
+                # 对于融合了norm权重的层，我们需要模拟融合后的输入
+                original_inp = inp[0].detach()
+                
+                # 应用RMSNorm但权重为融合的权重
+                if name in ["self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj"]:
+                    # Hook获取的original_inp已经是 RMSNorm(x) * input_norm_weight
+                    # 融合后的模型需要的是 RMSNorm(x)，所以要除以input_norm_weight
+                    input_dtype = original_inp.dtype
+                    x = original_inp.to(torch.float32) if original_inp.dtype == torch.float16 else original_inp
+                    norm_w = norm_weight.to(torch.float32) if norm_weight.dtype == torch.float16 else norm_weight
+                    
+                    # 除以原始的norm权重，得到纯RMSNorm结果
+                    normalized = x / norm_w.unsqueeze(0).unsqueeze(0)
+                    
+                    inputs_list.append(normalized.to(input_dtype).cpu())
+                elif name in ["mlp.gate_proj", "mlp.up_proj"]:
+                    # Hook获取的original_inp已经是 RMSNorm(x) * post_norm_weight
+                    # 融合后的模型需要的是 RMSNorm(x)，所以要除以post_norm_weight
+                    input_dtype = original_inp.dtype
+                    x = original_inp.to(torch.float32) if original_inp.dtype == torch.float16 else original_inp
+                    norm_w = norm_weight.to(torch.float32) if norm_weight.dtype == torch.float16 else norm_weight
+                    
+                    # 除以原始的norm权重，得到纯RMSNorm结果
+                    normalized = x / norm_w.unsqueeze(0).unsqueeze(0)
+                    
+                    inputs_list.append(normalized.to(input_dtype).cpu())
+                else:
+                    # 其他层没有融合LayerNorm权重，直接使用原始输入
+                    # Hadamard变换由FLHGPTQ内部处理
+                    inputs_list.append(original_inp.cpu())
+            return hook, inputs_list
+
+        hooks = []
+        inputs_dict = {}
+        for names in sequential:
+            for name in names:
+                module = layer
+                for part in name.split("."):
+                    module = getattr(module, part)
+                
+                # 根据层的类型选择合适的norm权重
+                if name in ["self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj"]:
+                    hook, inputs_list = make_fused_hook(name, input_norm_weight)
+                elif name in ["mlp.gate_proj", "mlp.up_proj"]:
+                    hook, inputs_list = make_fused_hook(name, post_norm_weight)
+                else:
+                    hook, inputs_list = make_fused_hook(name, None)
+                
                 inputs_dict[name] = inputs_list
                 hooks.append(module.register_forward_hook(hook))
 
@@ -418,6 +567,7 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                 if bias:
                     tmp_linear.bias.data.copy_(float_linear.bias.data.to(cal_device))
 
+                # FLHGPTQ内部会正确处理Hadamard变换
                 gptq = flh.nn.FLHGPTQ(tmp_linear)
                 for inp in gptq_data:
                     if inp is not None and inp.numel() > 0:
@@ -432,6 +582,7 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                 )
                 gptq.free()
 
+                # 直接使用GPTQ的结果，权重已经被正确量化
                 flh_linear = flh.nn.LinearFLH(in_f, out_f, bias=bias, dtype=dtype, device="cpu")
                 flh_linear.weight.copy_(tmp_linear.weight.data.cpu())
                 if bias:
@@ -448,14 +599,15 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
 
         calibration_data = None
         if use_gptq and calibration_dataloader is not None:
-            print("  - GPTQ calibration (collecting activations)...")
+            print("  - GPTQ calibration (collecting activations with fused LayerNorm)...")
             cal_device = target_device if target_device != "cpu" else "cuda" if torch.cuda.is_available() else "cpu"
             cal_seqlen = calibration_dataloader[0][0].shape[1] if calibration_dataloader else seqlen
-            calibration_data = _collect_calibration_inputs(
+            # 使用融合后的校准函数，考虑RMSNorm权重融合的影响
+            calibration_data = _collect_calibration_inputs_fused(
                 float_model, calibration_dataloader, cal_device, gptq_nsamples, cal_seqlen
             )
             torch.cuda.empty_cache()
-            print(f"  - Calibration complete, quantizing {num_layers} layers with GPTQ...")
+            print(f"  - Fused calibration complete, quantizing {num_layers} layers with GPTQ...")
         elif use_gptq:
             print("  - Warning: use_gptq=True but no calibration_dataloader, falling back to RTN quantization")
 
@@ -476,10 +628,54 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
             cal = calibration_data.get(layer_idx, {}) if calibration_data else {}
             qkv_inps = cal.get("self_attn.q_proj", []) or cal.get("self_attn.k_proj", []) or cal.get("self_attn.v_proj", [])
 
-            flh_layer.self_attn.q_proj = _quantize_linear(float_layer.self_attn.q_proj, use_gptq, qkv_inps)
-            flh_layer.self_attn.k_proj = _quantize_linear(float_layer.self_attn.k_proj, use_gptq, qkv_inps)
-            flh_layer.self_attn.v_proj = _quantize_linear(float_layer.self_attn.v_proj, use_gptq, qkv_inps)
+            # 获取input_layernorm权重用于QKV权重预乘
+            input_norm_weight = float_layer.input_layernorm.weight.data
+            
+            # 为QKV权重应用input_layernorm权重预乘
+            def _quantize_qkv_linear(float_linear, use_gptq_layer, gptq_data, norm_weight):
+                # 创建临时线性层，权重已预乘norm权重
+                temp_linear = torch.nn.Linear(
+                    float_linear.in_features, 
+                    float_linear.out_features, 
+                    bias=float_linear.bias is not None,
+                    device=float_linear.weight.device,
+                    dtype=float_linear.weight.dtype
+                )
+                
+                # 权重预乘input_layernorm权重 (W * diag(norm_weight))
+                temp_linear.weight.data = float_linear.weight.data * norm_weight.unsqueeze(0)
+                if float_linear.bias is not None:
+                    temp_linear.bias.data = float_layer.bias.data.clone()
+                
+                # 使用预乘后的权重进行量化
+                return _quantize_linear(temp_linear, use_gptq_layer, gptq_data)
+
+            flh_layer.self_attn.q_proj = _quantize_qkv_linear(float_layer.self_attn.q_proj, use_gptq, qkv_inps, input_norm_weight)
+            flh_layer.self_attn.k_proj = _quantize_qkv_linear(float_layer.self_attn.k_proj, use_gptq, qkv_inps, input_norm_weight)
+            flh_layer.self_attn.v_proj = _quantize_qkv_linear(float_layer.self_attn.v_proj, use_gptq, qkv_inps, input_norm_weight)
             flh_layer.self_attn.o_proj = _quantize_linear(float_layer.self_attn.o_proj, use_gptq, cal.get("self_attn.o_proj", []))
+
+            # 获取post_attention_layernorm权重用于MLP gate/up权重预乘
+            post_norm_weight = float_layer.post_attention_layernorm.weight.data
+            
+            # 为MLP gate/up权重应用post_attention_layernorm权重预乘
+            def _quantize_mlp_linear(float_linear, use_gptq_layer, gptq_data, norm_weight):
+                # 创建临时线性层，权重已预乘norm权重
+                temp_linear = torch.nn.Linear(
+                    float_linear.in_features, 
+                    float_linear.out_features, 
+                    bias=float_linear.bias is not None,
+                    device=float_linear.weight.device,
+                    dtype=float_linear.weight.dtype
+                )
+                
+                # 权重预乘post_attention_layernorm权重 (W * diag(norm_weight))
+                temp_linear.weight.data = float_linear.weight.data * norm_weight.unsqueeze(0)
+                if float_linear.bias is not None:
+                    temp_linear.bias.data = float_linear.bias.data.clone()
+                
+                # 使用预乘后的权重进行量化
+                return _quantize_linear(temp_linear, use_gptq_layer, gptq_data)
 
             flh_layer.mlp = FLH_LlamaMLP(
                 config=config,
@@ -489,14 +685,19 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
             )
             gate_up_inps = cal.get("mlp.gate_proj", []) or cal.get("mlp.up_proj", [])
 
-            flh_layer.mlp.gate_proj = _quantize_linear(float_layer.mlp.gate_proj, use_gptq, gate_up_inps)
-            flh_layer.mlp.up_proj = _quantize_linear(float_layer.mlp.up_proj, use_gptq, gate_up_inps)
+            # 对gate和up投影应用post_attention_layernorm权重融合
+            flh_layer.mlp.gate_proj = _quantize_mlp_linear(float_layer.mlp.gate_proj, use_gptq, gate_up_inps, post_norm_weight)
+            flh_layer.mlp.up_proj = _quantize_mlp_linear(float_layer.mlp.up_proj, use_gptq, gate_up_inps, post_norm_weight)
+            # down投影不需要融合，因为它接收的是激活后的输出
             flh_layer.mlp.down_proj = _quantize_linear(float_layer.mlp.down_proj, use_gptq, cal.get("mlp.down_proj", []))
 
+            # 创建input_layernorm，保持归一化但权重设为1（因为已预乘到QKV权重中）
             flh_layer.input_layernorm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+            flh_layer.input_layernorm.weight.data.fill_(1.0)  # 权重设为1
+            
+            # 创建post_attention_layernorm，保持归一化但权重设为1（因为已预乘到gate/up权重中）
             flh_layer.post_attention_layernorm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-            flh_layer.input_layernorm.weight.data.copy_(float_layer.input_layernorm.weight.data)
-            flh_layer.post_attention_layernorm.weight.data.copy_(float_layer.post_attention_layernorm.weight.data)
+            flh_layer.post_attention_layernorm.weight.data.fill_(1.0)  # 权重设为1
         
         print("\n✓ Weight copying and quantization completed!")
         
