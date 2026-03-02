@@ -119,6 +119,117 @@ def _collect_calibration_inputs(model, dataloader, device, nsamples, seqlen):
     return collected
 
 
+def _collect_calibration_inputs_flh(model, dataloader, device, nsamples, seqlen):
+    """
+    使用FLH模型收集校准输入（LayerNorm权重已融合，结构完全匹配）
+    """
+    model.eval()
+    model.config.use_cache = False
+    if not hasattr(model, "seqlen"):
+        model.seqlen = seqlen
+    layers = model.model.layers
+    dtype = next(model.parameters()).dtype
+
+    model.model.embed_tokens = model.model.embed_tokens.to(device)
+    model.model.norm = model.model.norm.to(device)
+    if hasattr(model.model, "rotary_emb"):
+        model.model.rotary_emb = model.model.rotary_emb.to(device)
+    layers[0] = layers[0].to(device)
+
+    cache = {"i": 0, "attention_mask": None, "position_ids": None}
+    inps = torch.zeros((nsamples, seqlen, model.config.hidden_size), dtype=dtype, device=device)
+
+    class Catcher(nn.Module):
+        def __init__(self, module):
+            super().__init__()
+            self.module = module
+        def forward(self, inp, **kwargs):
+            inps[cache["i"]] = inp
+            cache["i"] += 1
+            cache["attention_mask"] = kwargs.get("attention_mask")
+            cache["position_ids"] = kwargs.get("position_ids")
+            raise ValueError
+
+    layers[0] = Catcher(layers[0])
+    for batch in dataloader:
+        try:
+            with torch.no_grad():
+                model(batch[0].to(device))
+        except ValueError:
+            pass
+    layers[0] = layers[0].module
+
+    layers[0] = layers[0].cpu()
+    model.model.embed_tokens = model.model.embed_tokens.cpu()
+    model.model.norm = model.model.norm.cpu()
+    if hasattr(model.model, "rotary_emb"):
+        model.model.rotary_emb = model.model.rotary_emb.cpu()
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    attention_mask = cache["attention_mask"]
+    position_ids = cache["position_ids"]
+
+    # FLH模型的结构：LayerNorm权重已融合，直接收集各层输入
+    sequential = [
+        ["self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj"],  # 已融合input_layernorm
+        ["self_attn.o_proj"],
+        ["mlp.gate_proj", "mlp.up_proj"],  # 已融合post_attention_layernorm
+        ["mlp.down_proj"],
+    ]
+
+    collected = {}  # 按层组织: {layer_idx: {name: [tensors]}}
+    outs = torch.zeros_like(inps)
+
+    for i in range(len(layers)):
+        layer = layers[i].to(device)
+        collected[i] = {}  # 为每一层创建字典
+
+        def make_flh_hook(name):
+            """为FLH模型创建简单的hook（无需复杂变换）"""
+            inputs_list = []
+            def hook(module, inp, out):
+                # FLH模型中，input已经是正确的激活值
+                # 对于融合层：input是RMSNorm(x)（权重=1）
+                # 对于其他层：input是原始激活值
+                # FLHGPTQ.add_batch()会自动处理Hadamard变换
+                original_inp = inp[0].detach()
+                inputs_list.append(original_inp.cpu())
+            return hook, inputs_list
+
+        hooks = []
+        inputs_dict = {}
+        for names in sequential:
+            for name in names:
+                module = layer
+                for part in name.split("."):
+                    module = getattr(module, part)
+                
+                hook, inputs_list = make_flh_hook(name)
+                inputs_dict[name] = inputs_list
+                hooks.append(module.register_forward_hook(hook))
+
+        for j in range(nsamples):
+            with torch.no_grad():
+                outs[j] = layer(
+                    inps[j].unsqueeze(0),
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                )[0]
+
+        for h in hooks:
+            h.remove()
+
+        # 将当前层的数据保存到collected[i]中
+        for name in inputs_dict:
+            collected[i][name] = inputs_dict[name]
+
+        layers[i] = layer.cpu()
+        inps, outs = outs, inps
+
+    return collected
+
+
 def _collect_calibration_inputs_fused(model, dataloader, device, nsamples, seqlen):
     """
     收集融合后模型的校准输入（考虑RMSNorm权重融合的影响）
@@ -410,7 +521,7 @@ class FLH_FP16LlamaForCausalLM(LlamaForCausalLM):
             layer.self_attn = FLH_FP16LlamaAttention(config=config, layer_idx=layer_idx)
     
     @classmethod
-    def from_float(cls, float_model, target_device="cuda"):
+    def from_float(cls, float_model, target_device="cuda", fuse_layernorm=True):
         config = float_model.config
         config._attn_implementation = "flash_attention_2"
         
@@ -431,23 +542,64 @@ class FLH_FP16LlamaForCausalLM(LlamaForCausalLM):
         flh_model.model.norm.load_state_dict(float_model.model.norm.state_dict())
         
         num_layers = len(flh_model.model.layers)
-        print(f"  - Copying {num_layers} transformer layers...")
+        if fuse_layernorm:
+            print(f"  - Copying and fusing LayerNorm weights in {num_layers} transformer layers...")
+        else:
+            print(f"  - Copying {num_layers} transformer layers...")
+            
         for layer_idx, (flh_layer, float_layer) in enumerate(tqdm(
             zip(flh_model.model.layers, float_model.model.layers),
             total=num_layers,
             desc="  Copying layers"
         )):
-            flh_layer.self_attn.q_proj.load_state_dict(float_layer.self_attn.q_proj.state_dict())
-            flh_layer.self_attn.k_proj.load_state_dict(float_layer.self_attn.k_proj.state_dict())
-            flh_layer.self_attn.v_proj.load_state_dict(float_layer.self_attn.v_proj.state_dict())
-            flh_layer.self_attn.o_proj.load_state_dict(float_layer.self_attn.o_proj.state_dict())
-            
-            flh_layer.mlp.gate_proj.load_state_dict(float_layer.mlp.gate_proj.state_dict())
-            flh_layer.mlp.up_proj.load_state_dict(float_layer.mlp.up_proj.state_dict())
-            flh_layer.mlp.down_proj.load_state_dict(float_layer.mlp.down_proj.state_dict())
-            
-            flh_layer.input_layernorm.load_state_dict(float_layer.input_layernorm.state_dict())
-            flh_layer.post_attention_layernorm.load_state_dict(float_layer.post_attention_layernorm.state_dict())
+            if fuse_layernorm:
+                # 融合input_layernorm权重到QKV
+                input_norm_weight = float_layer.input_layernorm.weight.data
+                flh_layer.self_attn.q_proj.weight.data = float_layer.self_attn.q_proj.weight.data * input_norm_weight.unsqueeze(0)
+                flh_layer.self_attn.k_proj.weight.data = float_layer.self_attn.k_proj.weight.data * input_norm_weight.unsqueeze(0)
+                flh_layer.self_attn.v_proj.weight.data = float_layer.self_attn.v_proj.weight.data * input_norm_weight.unsqueeze(0)
+                
+                # 复制偏置（如果存在）
+                if float_layer.self_attn.q_proj.bias is not None:
+                    flh_layer.self_attn.q_proj.bias.data = float_layer.self_attn.q_proj.bias.data.clone()
+                if float_layer.self_attn.k_proj.bias is not None:
+                    flh_layer.self_attn.k_proj.bias.data = float_layer.self_attn.k_proj.bias.data.clone()
+                if float_layer.self_attn.v_proj.bias is not None:
+                    flh_layer.self_attn.v_proj.bias.data = float_layer.self_attn.v_proj.bias.data.clone()
+                
+                # o_proj不融合
+                flh_layer.self_attn.o_proj.load_state_dict(float_layer.self_attn.o_proj.state_dict())
+                
+                # 融合post_attention_layernorm权重到MLP gate/up
+                post_norm_weight = float_layer.post_attention_layernorm.weight.data
+                flh_layer.mlp.gate_proj.weight.data = float_layer.mlp.gate_proj.weight.data * post_norm_weight.unsqueeze(0)
+                flh_layer.mlp.up_proj.weight.data = float_layer.mlp.up_proj.weight.data * post_norm_weight.unsqueeze(0)
+                
+                # 复制偏置（如果存在）
+                if float_layer.mlp.gate_proj.bias is not None:
+                    flh_layer.mlp.gate_proj.bias.data = float_layer.mlp.gate_proj.bias.data.clone()
+                if float_layer.mlp.up_proj.bias is not None:
+                    flh_layer.mlp.up_proj.bias.data = float_layer.mlp.up_proj.bias.data.clone()
+                
+                # down_proj不融合
+                flh_layer.mlp.down_proj.load_state_dict(float_layer.mlp.down_proj.state_dict())
+                
+                # 设置LayerNorm权重为1
+                flh_layer.input_layernorm.weight.data.fill_(1.0)
+                flh_layer.post_attention_layernorm.weight.data.fill_(1.0)
+            else:
+                # 不融合，直接复制
+                flh_layer.self_attn.q_proj.load_state_dict(float_layer.self_attn.q_proj.state_dict())
+                flh_layer.self_attn.k_proj.load_state_dict(float_layer.self_attn.k_proj.state_dict())
+                flh_layer.self_attn.v_proj.load_state_dict(float_layer.self_attn.v_proj.state_dict())
+                flh_layer.self_attn.o_proj.load_state_dict(float_layer.self_attn.o_proj.state_dict())
+                
+                flh_layer.mlp.gate_proj.load_state_dict(float_layer.mlp.gate_proj.state_dict())
+                flh_layer.mlp.up_proj.load_state_dict(float_layer.mlp.up_proj.state_dict())
+                flh_layer.mlp.down_proj.load_state_dict(float_layer.mlp.down_proj.state_dict())
+                
+                flh_layer.input_layernorm.load_state_dict(float_layer.input_layernorm.state_dict())
+                flh_layer.post_attention_layernorm.load_state_dict(float_layer.post_attention_layernorm.state_dict())
         
         print("✓ Weight copying completed!")
         
@@ -599,15 +751,23 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
 
         calibration_data = None
         if use_gptq and calibration_dataloader is not None:
-            print("  - GPTQ calibration (collecting activations with fused LayerNorm)...")
+            print("  - GPTQ calibration (using FP16 FLH model as reference)...")
             cal_device = target_device if target_device != "cpu" else "cuda" if torch.cuda.is_available() else "cpu"
             cal_seqlen = calibration_dataloader[0][0].shape[1] if calibration_dataloader else seqlen
-            # 使用融合后的校准函数，考虑RMSNorm权重融合的影响
-            calibration_data = _collect_calibration_inputs_fused(
-                float_model, calibration_dataloader, cal_device, gptq_nsamples, cal_seqlen
+            
+            # 创建FP16 FLH模型作为校准参考（LayerNorm已融合，但未量化）
+            print("    Creating FP16 FLH reference model for calibration...")
+            fp16_flh_model = FLH_FP16LlamaForCausalLM.from_float(float_model, target_device="cpu", fuse_layernorm=True)
+            
+            # 使用FP16 FLH模型收集校准数据（结构完全匹配）
+            calibration_data = _collect_calibration_inputs_flh(
+                fp16_flh_model, calibration_dataloader, cal_device, gptq_nsamples, cal_seqlen
             )
+            
+            # 清理FP16模型
+            del fp16_flh_model
             torch.cuda.empty_cache()
-            print(f"  - Fused calibration complete, quantizing {num_layers} layers with GPTQ...")
+            print(f"  - FLH-based calibration complete, quantizing {num_layers} layers with GPTQ...")
         elif use_gptq:
             print("  - Warning: use_gptq=True but no calibration_dataloader, falling back to RTN quantization")
 

@@ -1,8 +1,8 @@
 {
   "flh_model": {
     "wikitext2": {
-      "perplexity": 11.934491157531738,
-      "eval_time_seconds": 25.863341569900513,
+      "perplexity": 11.94179630279541,
+      "eval_time_seconds": 25.897255659103394,
       "total_tokens": 289077,
       "seq_length": 2048,
       "num_samples": 141
@@ -11,7 +11,7 @@
   "original_model": {
     "wikitext2": {
       "perplexity": 9.750959396362305,
-      "eval_time_seconds": 14.859713077545166,
+      "eval_time_seconds": 14.751890659332275,
       "total_tokens": 289077,
       "seq_length": 2048,
       "num_samples": 141
@@ -20,16 +20,16 @@
   "differences": {
     "wikitext2": {
       "perplexity": {
-        "flh": 11.934491157531738,
+        "flh": 11.94179630279541,
         "original": 9.750959396362305,
-        "absolute_diff": 2.1835317611694336,
-        "relative_diff_percent": 22.392994088192207
+        "absolute_diff": 2.1908369064331055,
+        "relative_diff_percent": 22.467911283175066
       },
       "eval_time_seconds": {
-        "flh": 25.863341569900513,
-        "original": 14.859713077545166,
-        "absolute_diff": 11.003628492355347,
-        "relative_diff_percent": 74.05007374592695
+        "flh": 25.897255659103394,
+        "original": 14.751890659332275,
+        "absolute_diff": 11.145364999771118,
+        "relative_diff_percent": 75.55211231667032
       },
       "total_tokens": {
         "flh": 289077,
