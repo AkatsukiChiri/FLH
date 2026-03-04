@@ -128,15 +128,20 @@ def fast_hadamard_transform(x, group_size=None, normalize=True):
 
 
 class ActQuantizer(torch.nn.Module):
-    def __init__(self, bits=8, group_size=-1, sym=True, input_clip_ratio=1.0):
+    def __init__(self, bits=8, group_size=-1, sym=True, input_clip_ratio=1.0, use_hadamard=True):
         super().__init__()
         self.bits = bits
         self.group_size = group_size
         self.sym = sym
         self.input_clip_ratio = input_clip_ratio
+        self.use_hadamard = use_hadamard
         
     def forward(self, x):
-        x_transformed = fast_hadamard_transform(x, group_size=self.group_size, normalize=True)
+        # 根据 use_hadamard 参数决定是否进行 Hadamard 变换
+        if self.use_hadamard:
+            x_transformed = fast_hadamard_transform(x, group_size=self.group_size, normalize=True)
+        else:
+            x_transformed = x
         
         if self.bits >= 16:
             return x_transformed
@@ -205,12 +210,13 @@ class ActQuantizer(torch.nn.Module):
 
 
 class WeightQuantizer(torch.nn.Module):
-    def __init__(self, bits=4, group_size=-1, sym=True, channel_wise=True):
+    def __init__(self, bits=4, group_size=-1, sym=True, channel_wise=True, use_hadamard=True):
         super().__init__()
         self.bits = bits
         self.group_size = group_size
         self.sym = sym
         self.channel_wise = channel_wise
+        self.use_hadamard = use_hadamard
         
         self.register_buffer('scale', None)
         self.register_buffer('zero_point', None)
@@ -221,7 +227,11 @@ class WeightQuantizer(torch.nn.Module):
             self.calibrated = True
             return
         
-        weight_transformed = fast_hadamard_transform(weight, group_size=self.group_size, normalize=True)
+        # 根据 use_hadamard 参数决定是否应用 Hadamard 变换
+        if self.use_hadamard:
+            weight_transformed = fast_hadamard_transform(weight, group_size=self.group_size, normalize=True)
+        else:
+            weight_transformed = weight
         
         with torch.no_grad():
             if self.group_size > 0:
@@ -312,7 +322,11 @@ class WeightQuantizer(torch.nn.Module):
         self.zero_point = zero_point
     
     def quantize(self, weight):
-        weight_transformed = fast_hadamard_transform(weight, group_size=self.group_size, normalize=True)
+        # 根据 use_hadamard 参数决定是否应用 Hadamard 变换
+        if self.use_hadamard:
+            weight_transformed = fast_hadamard_transform(weight, group_size=self.group_size, normalize=True)
+        else:
+            weight_transformed = weight
         
         if self.bits >= 16:
             return weight_transformed

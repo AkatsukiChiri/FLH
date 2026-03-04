@@ -416,7 +416,11 @@ class FLH_FP16LlamaAttention(LlamaFlashAttention2):
 
         bsz, q_len, _ = hidden_states.size()
 
-        hidden_states = self.quantizer(hidden_states)
+        # 使用第一个量化器：仅量化，不做hadamard变换
+        if hasattr(self, 'quantizer1'):
+            hidden_states = self.quantizer1(hidden_states)
+        else:
+            hidden_states = self.quantizer(hidden_states)
 
         query_states = self.q_proj(hidden_states)
         key_states = self.k_proj(hidden_states)
@@ -493,24 +497,36 @@ class FLH_FP16LlamaAttention(LlamaFlashAttention2):
         )
 
         attn_output = attn_output.reshape(bsz, q_len, -1).contiguous()
-        attn_output = self.quantizer(attn_output)
+        # 使用第二个量化器：hadamard变换后量化
+        if hasattr(self, 'quantizer2'):
+            attn_output = self.quantizer2(attn_output)
+        else:
+            attn_output = self.quantizer(attn_output)
         attn_output = self.o_proj(attn_output)
+        # print(attn_output[0][0][:4])
+        # print(flh.nn.fast_hadamard_transform(attn_output, group_size=128, normalize=True)[0][0][:4])    
         return attn_output, None if not output_attentions else None, past_key_value
     
 class FLH_LlamaAttention(FLH_FP16LlamaAttention):
     def __init__(self, *args, act_bits=16, act_group_size=-1, act_sym=True, **kwargs):
         super().__init__(*args, **kwargs)
-        self.quantizer = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym)
+        # 第一个量化器：仅量化，不进行 Hadamard 变换
+        self.quantizer1 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=False)
+        # 第二个量化器：既量化又进行 Hadamard 变换
+        self.quantizer2 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=True)
         
 class FLH_LlamaMLP(LlamaMLP):
     def __init__(self, *args, act_bits=16, act_group_size=-1, act_sym=True, **kwargs):
         super().__init__(*args, **kwargs)
-        self.quantizer = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym)
+        # 第一个量化器：仅量化，不进行 Hadamard 变换
+        self.quantizer1 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=False)
+        # 第二个量化器：既量化又进行 Hadamard 变换
+        self.quantizer2 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=True)
         
     def forward(self, x):
-        x = self.quantizer(x)
+        x = self.quantizer1(x)  # 仅量化
         x = self.act_fn(self.gate_proj(x)) * self.up_proj(x)
-        x = self.quantizer(x)
+        x = self.quantizer2(x)  # 量化 + Hadamard 变换
         return self.down_proj(x)
     
 class FLH_FP16LlamaForCausalLM(LlamaForCausalLM):
@@ -641,6 +657,33 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                 act_group_size=act_group_size
             )
     
+    def forward(self, input_ids, attention_mask=None, position_ids=None, past_key_values=None, inputs_embeds=None, labels=None, use_cache=None, output_attentions=None, output_hidden_states=None, return_dict=None, cache_position=None):
+        # 1. embedding层之后进行分组hadamard变换
+        if inputs_embeds is None:
+            inputs_embeds = self.model.embed_tokens(input_ids)
+        inputs_embeds = flh.nn.fast_hadamard_transform(inputs_embeds, group_size=self.act_group_size, normalize=True)
+        
+        # 调用父类的 forward 方法，但传入变换后的 inputs_embeds
+        outputs = super().forward(
+            input_ids=None,  # 不使用 input_ids，直接使用 inputs_embeds
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            labels=labels,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+            cache_position=cache_position
+        )
+        
+        # 4. 在输出之前进行分组hadamard变换
+        # if hasattr(outputs, 'logits'):
+        #     outputs.logits = flh.nn.fast_hadamard_transform(outputs.logits, group_size=self.act_group_size, normalize=True)
+        
+        return outputs
+    
     @classmethod
     def from_float(cls, float_model, target_device="cuda", weight_bits=4, weight_group_size=128, act_bits=4, act_group_size=128, weight_sym=False, act_sym=True, save_quantized_path=None, use_gptq=False, calibration_dataloader=None, gptq_nsamples=128, gptq_percdamp=0.01, gptq_actorder=False):
         """
@@ -745,7 +788,10 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                     float_linear,
                     weight_bits=weight_bits,
                     weight_group_size=weight_group_size,
-                    weight_sym=weight_sym
+                    weight_sym=weight_sym,
+                    dual_hadamard=False,  # 默认使用单侧 Hadamard
+                    in_group_size=act_group_size,
+                    out_group_size=act_group_size
                 )
             return flh_linear
 
@@ -792,7 +838,7 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
             input_norm_weight = float_layer.input_layernorm.weight.data
             
             # 为QKV权重应用input_layernorm权重预乘
-            def _quantize_qkv_linear(float_linear, use_gptq_layer, gptq_data, norm_weight):
+            def _quantize_qkv_linear_flh(float_linear, norm_weight):
                 # 创建临时线性层，权重已预乘norm权重
                 temp_linear = torch.nn.Linear(
                     float_linear.in_features, 
@@ -802,24 +848,42 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                     dtype=float_linear.weight.dtype
                 )
                 
-                # 权重预乘input_layernorm权重 (W * diag(norm_weight))
+                # 步骤1: 权重预乘input_layernorm权重 (W * diag(norm_weight))
                 temp_linear.weight.data = float_linear.weight.data * norm_weight.unsqueeze(0)
                 if float_linear.bias is not None:
-                    temp_linear.bias.data = float_layer.bias.data.clone()
+                    temp_linear.bias.data = float_linear.bias.data.clone()
                 
-                # 使用预乘后的权重进行量化
-                return _quantize_linear(temp_linear, use_gptq_layer, gptq_data)
+                # 步骤2: 使用LinearFLH进行量化（单侧Hadamard）
+                return flh.nn.LinearFLH.from_float(
+                    temp_linear,
+                    weight_bits=weight_bits,
+                    weight_group_size=weight_group_size,
+                    weight_sym=weight_sym,
+                    dual_hadamard=False,  # QKV使用单侧Hadamard
+                    in_group_size=act_group_size,
+                    out_group_size=act_group_size
+                )
 
-            flh_layer.self_attn.q_proj = _quantize_qkv_linear(float_layer.self_attn.q_proj, use_gptq, qkv_inps, input_norm_weight)
-            flh_layer.self_attn.k_proj = _quantize_qkv_linear(float_layer.self_attn.k_proj, use_gptq, qkv_inps, input_norm_weight)
-            flh_layer.self_attn.v_proj = _quantize_qkv_linear(float_layer.self_attn.v_proj, use_gptq, qkv_inps, input_norm_weight)
-            flh_layer.self_attn.o_proj = _quantize_linear(float_layer.self_attn.o_proj, use_gptq, cal.get("self_attn.o_proj", []))
+            flh_layer.self_attn.q_proj = _quantize_qkv_linear_flh(float_layer.self_attn.q_proj, input_norm_weight)
+            flh_layer.self_attn.k_proj = _quantize_qkv_linear_flh(float_layer.self_attn.k_proj, input_norm_weight)
+            flh_layer.self_attn.v_proj = _quantize_qkv_linear_flh(float_layer.self_attn.v_proj, input_norm_weight)
+            
+            # o_proj 使用双侧 Hadamard 变换
+            flh_layer.self_attn.o_proj = flh.nn.LinearFLH.from_float(
+                float_layer.self_attn.o_proj,
+                weight_bits=weight_bits,
+                weight_group_size=weight_group_size,
+                weight_sym=weight_sym,
+                dual_hadamard=True,  # 使用双侧 Hadamard
+                in_group_size=act_group_size,
+                out_group_size=act_group_size
+            )
 
             # 获取post_attention_layernorm权重用于MLP gate/up权重预乘
             post_norm_weight = float_layer.post_attention_layernorm.weight.data
             
             # 为MLP gate/up权重应用post_attention_layernorm权重预乘
-            def _quantize_mlp_linear(float_linear, use_gptq_layer, gptq_data, norm_weight):
+            def _quantize_mlp_linear_flh(float_linear, norm_weight):
                 # 创建临时线性层，权重已预乘norm权重
                 temp_linear = torch.nn.Linear(
                     float_linear.in_features, 
@@ -829,13 +893,21 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                     dtype=float_linear.weight.dtype
                 )
                 
-                # 权重预乘post_attention_layernorm权重 (W * diag(norm_weight))
+                # 步骤1: 权重预乘post_attention_layernorm权重 (W * diag(norm_weight))
                 temp_linear.weight.data = float_linear.weight.data * norm_weight.unsqueeze(0)
                 if float_linear.bias is not None:
                     temp_linear.bias.data = float_linear.bias.data.clone()
                 
-                # 使用预乘后的权重进行量化
-                return _quantize_linear(temp_linear, use_gptq_layer, gptq_data)
+                # 步骤2: 使用LinearFLH进行量化（单侧Hadamard）
+                return flh.nn.LinearFLH.from_float(
+                    temp_linear,
+                    weight_bits=weight_bits,
+                    weight_group_size=weight_group_size,
+                    weight_sym=weight_sym,
+                    dual_hadamard=False,  # gate/up使用单侧Hadamard
+                    in_group_size=act_group_size,
+                    out_group_size=act_group_size
+                )
 
             flh_layer.mlp = FLH_LlamaMLP(
                 config=config,
@@ -846,10 +918,19 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
             gate_up_inps = cal.get("mlp.gate_proj", []) or cal.get("mlp.up_proj", [])
 
             # 对gate和up投影应用post_attention_layernorm权重融合
-            flh_layer.mlp.gate_proj = _quantize_mlp_linear(float_layer.mlp.gate_proj, use_gptq, gate_up_inps, post_norm_weight)
-            flh_layer.mlp.up_proj = _quantize_mlp_linear(float_layer.mlp.up_proj, use_gptq, gate_up_inps, post_norm_weight)
-            # down投影不需要融合，因为它接收的是激活后的输出
-            flh_layer.mlp.down_proj = _quantize_linear(float_layer.mlp.down_proj, use_gptq, cal.get("mlp.down_proj", []))
+            flh_layer.mlp.gate_proj = _quantize_mlp_linear_flh(float_layer.mlp.gate_proj, post_norm_weight)
+            flh_layer.mlp.up_proj = _quantize_mlp_linear_flh(float_layer.mlp.up_proj, post_norm_weight)
+            
+            # down投影使用LinearFLH（单侧Hadamard）
+            flh_layer.mlp.down_proj = flh.nn.LinearFLH.from_float(
+                float_layer.mlp.down_proj,
+                weight_bits=weight_bits,
+                weight_group_size=weight_group_size,
+                weight_sym=weight_sym,
+                dual_hadamard=True,  # down_proj使用双侧Hadamard
+                in_group_size=act_group_size,
+                out_group_size=act_group_size
+            )
 
             # 创建input_layernorm，保持归一化但权重设为1（因为已预乘到QKV权重中）
             flh_layer.input_layernorm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -860,6 +941,16 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
             flh_layer.post_attention_layernorm.weight.data.fill_(1.0)  # 权重设为1
         
         print("\n✓ Weight copying and quantization completed!")
+        
+        flh_model.lm_head = flh.nn.LinearFLH.from_float(
+            float_model.lm_head,
+            weight_bits=16,
+            weight_group_size=weight_group_size,
+            weight_sym=weight_sym,
+            dual_hadamard=False,
+            in_group_size=act_group_size,
+            out_group_size=act_group_size
+        )
         
         # 确保模型是FP16格式
         flh_model = flh_model.half()
