@@ -88,14 +88,16 @@ class GPTQQuantizer:
 
 
 class FLHGPTQ:
-    def __init__(self, layer):
+    def __init__(self, layer, dual_hadamard=False):
         self.layer = layer
+        self.dual_hadamard = dual_hadamard
         self.dev = layer.weight.device
         W = layer.weight.data.clone()
         self.rows = W.shape[0]
         self.columns = W.shape[1]
         self.H = torch.zeros((self.columns, self.columns), device=self.dev, dtype=torch.float32)
         self.nsamples = 0
+        self.out_list = []
 
     def add_batch(self, inp, out, group_size=-1):
         if len(inp.shape) == 2:
@@ -109,6 +111,11 @@ class FLHGPTQ:
         self.nsamples += tmp
         inp = math.sqrt(2 / self.nsamples) * inp
         self.H += inp.matmul(inp.t())
+        if out is not None:
+            if len(out.shape) == 2:
+                out = out.unsqueeze(0)
+            out_flat = out.reshape(-1, out.shape[-1])
+            self.out_list.append(out_flat)
 
     def fasterquant(
         self,
@@ -118,12 +125,19 @@ class FLHGPTQ:
         actorder=False,
         sym=True,
         bits=4,
+        dual_hadamard=None,
     ):
+        if dual_hadamard is None:
+            dual_hadamard = self.dual_hadamard
         W = self.layer.weight.data.clone().float()
         group_size = group_size if group_size > 0 and self.columns % group_size == 0 else -1
+        gs = group_size if group_size > 0 else None
 
-        # Apply Hadamard transform to weight
-        W = fast_hadamard_transform(W, group_size=group_size if group_size > 0 else None)
+        if dual_hadamard:
+            W = fast_hadamard_transform(W, group_size=gs)
+            W = fast_hadamard_transform(W.T, group_size=gs).T
+        else:
+            W = fast_hadamard_transform(W, group_size=gs)
 
         self.quantizer = GPTQQuantizer(bits=bits, groupsize=group_size, sym=sym)
 

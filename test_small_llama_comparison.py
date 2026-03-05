@@ -115,9 +115,9 @@ def main():
     w8a8_model = FLH_LlamaForCausalLM.from_float(
         original_model, 
         target_device=device,
-        weight_bits=15,
+        weight_bits=16,
         weight_group_size=128,
-        act_bits=15,
+        act_bits=16,
         act_group_size=128,
         use_gptq=False  # 禁用GPTQ，使用RTN量化
     )
