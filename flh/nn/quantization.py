@@ -52,7 +52,7 @@ def had_transform(X: torch.Tensor, transpose=False):
     hadK, K = get_hadK(n, transpose)
     
     input_shape = X.shape
-    input = X.clone().view(-1, n, 1)
+    input = X.clone().to(torch.float64).view(-1, n, 1)
     output = input.clone()
     
     # 蝶形变换
@@ -69,7 +69,7 @@ def had_transform(X: torch.Tensor, transpose=False):
     if hadK is not None and K > 1:
         input = hadK.view(1, K, K).to(input) @ input
     
-    return input.view(input_shape) / torch.tensor(n).sqrt()
+    return input.view(input_shape) / math.sqrt(float(n))
 
 
 def had_transform_group(X: torch.Tensor, transpose=False, group_size: int = 128):
@@ -88,7 +88,7 @@ def had_transform_group(X: torch.Tensor, transpose=False, group_size: int = 128)
     n = group_size
     hadK, K = get_hadK(n, transpose)
     group_num = X.shape[-1] // n
-    input = X.clone().view(-1, group_num, n, 1)
+    input = X.clone().to(torch.float64).view(-1, group_num, n, 1)
     input = input.transpose(0, 1)
     output = input.clone()
     
@@ -108,7 +108,7 @@ def had_transform_group(X: torch.Tensor, transpose=False, group_size: int = 128)
     
     input = input.transpose(0, 1)
     
-    return input.view(X.shape) / torch.tensor(n).sqrt()
+    return input.view(X.shape) / math.sqrt(float(n))
 
 
 def fast_hadamard_transform(x, group_size=None, normalize=True):
@@ -120,10 +120,15 @@ def fast_hadamard_transform(x, group_size=None, normalize=True):
     :param normalize: 是否归一化（已在内部实现，此参数保持兼容性）
     :return: 变换后的张量
     """
+    orig_dtype = x.dtype
+    x_f64 = x.to(torch.float64)
     if group_size is not None and group_size > 0:
-        return had_transform_group(x, transpose=False, group_size=group_size)
+        out = had_transform_group(x_f64, transpose=False, group_size=group_size)
     else:
-        return had_transform(x, transpose=False)
+        out = had_transform(x_f64, transpose=False)
+    if orig_dtype == torch.float64:
+        return out
+    return out.to(orig_dtype)
 
 
 
