@@ -104,7 +104,6 @@ class FLHGPTQ:
             inp = inp.unsqueeze(0)
         tmp = inp.shape[0] * inp.shape[1] if len(inp.shape) == 3 else inp.shape[0]
         inp = inp.reshape(-1, inp.shape[-1])
-        # Apply Hadamard to activation (same as FLH forward)
         inp = fast_hadamard_transform(inp.float(), group_size=group_size if group_size > 0 else None)
         inp = inp.t()
         self.H *= self.nsamples / (self.nsamples + tmp)
@@ -132,7 +131,7 @@ class FLHGPTQ:
         W = self.layer.weight.data.clone().float()
         group_size = group_size if group_size > 0 and self.columns % group_size == 0 else -1
         gs = group_size if group_size > 0 else None
-
+        
         if dual_hadamard:
             W = fast_hadamard_transform(W, group_size=gs)
             W = fast_hadamard_transform(W.T, group_size=gs).T
