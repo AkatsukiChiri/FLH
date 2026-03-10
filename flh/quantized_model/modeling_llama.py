@@ -441,7 +441,7 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
         return outputs
     
     @classmethod
-    def from_float(cls, float_model, target_device="cuda", weight_bits=4, weight_group_size=128, act_bits=4, act_group_size=128, weight_sym=False, act_sym=True, save_quantized_path=None, use_gptq=False, calibration_dataloader=None, gptq_nsamples=128, gptq_percdamp=0.01, gptq_actorder=True):
+    def from_float(cls, float_model, target_device="cuda", weight_bits=4, weight_group_size=128, act_bits=4, act_group_size=128, weight_sym=False, act_sym=True, save_quantized_path=None, use_gptq=False, calibration_dataloader=None, gptq_nsamples=128, gptq_percdamp=0.01, gptq_actorder=True, clip_ratio=0.99):
         """
         Convert a standard LlamaForCausalLM model to FLH_LlamaForCausalLM with quantization.
         
@@ -473,7 +473,7 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
         torch.set_default_dtype(torch.float16)
         
         print("  Creating FLH quantized model structure on CPU...")
-        print(f"  Quantization config: W{weight_bits}G{weight_group_size}{'_sym' if weight_sym else '_asym'} / A{act_bits}G{act_group_size}{'_sym' if act_sym else '_asym'}")
+        print(f"  Quantization config: W{weight_bits}G{weight_group_size}{'_sym' if weight_sym else '_asym'} / A{act_bits}G{act_group_size}{'_sym' if act_sym else '_asym'} clip_ratio={clip_ratio}")
         
         # Create model WITHOUT calling __init__ to avoid premature quantization
         flh_model = cls.__new__(cls)
@@ -563,7 +563,7 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                     for inp in qkv_inps_here:
                         if inp is not None and inp.numel() > 0:
                             gptq.add_batch(inp.to(cal_device), None, group_size=weight_group_size if weight_group_size > 0 else -1)
-                    gptq.fasterquant(group_size=weight_group_size, blocksize=128, percdamp=gptq_percdamp, actorder=gptq_actorder, sym=weight_sym, bits=weight_bits, dual_hadamard=False)
+                    gptq.fasterquant(group_size=weight_group_size, blocksize=128, percdamp=gptq_percdamp, actorder=gptq_actorder, sym=weight_sym, bits=weight_bits, dual_hadamard=False, clip_ratio=clip_ratio)
                     
                     gptq.free()
                     flh_linear = flh.nn.LinearFLH(float_linear.in_features, float_linear.out_features, bias=tmp_linear.bias is not None, dtype=tmp_linear.weight.dtype, device="cpu", dual_hadamard=False, in_group_size=act_group_size, out_group_size=act_group_size)
@@ -593,9 +593,10 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                         weight_bits=weight_bits,
                         weight_group_size=weight_group_size,
                         weight_sym=weight_sym,
-                        dual_hadamard=False,  # QKV使用单侧Hadamard
+                        dual_hadamard=False,
                         in_group_size=act_group_size,
-                        out_group_size=act_group_size
+                        out_group_size=act_group_size,
+                        clip_ratio=clip_ratio
                     )
             
             flh_layer.self_attn.q_proj = _quantize_qkv_linear_flh(float_layer.self_attn.q_proj, input_norm_weight, qkv_inps, use_gptq_here=use_gptq)
@@ -617,7 +618,7 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                     if inp is not None and inp.numel() > 0:
                         # gptq.add_batch(inp.to(cal_device), out_H.to(cal_device) if out_H is not None else None, group_size=weight_group_size if weight_group_size > 0 else -1)
                         gptq.add_batch(inp.to(cal_device), None, group_size=weight_group_size if weight_group_size > 0 else -1)
-                gptq.fasterquant(group_size=weight_group_size, blocksize=128, percdamp=gptq_percdamp, actorder=gptq_actorder, sym=weight_sym, bits=weight_bits, dual_hadamard=True)
+                gptq.fasterquant(group_size=weight_group_size, blocksize=128, percdamp=gptq_percdamp, actorder=gptq_actorder, sym=weight_sym, bits=weight_bits, dual_hadamard=True, clip_ratio=clip_ratio)
                 gptq.free()
                 flh_layer.self_attn.o_proj = flh.nn.LinearFLH(float_layer.self_attn.o_proj.in_features, float_layer.self_attn.o_proj.out_features, bias=tmp_linear.bias is not None, dtype=tmp_linear.weight.dtype, device="cpu", dual_hadamard=True, in_group_size=act_group_size, out_group_size=act_group_size)
                 flh_layer.self_attn.o_proj.weight.copy_(tmp_linear.weight.data.cpu())
@@ -632,7 +633,8 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                     weight_sym=weight_sym,
                     dual_hadamard=True,
                     in_group_size=act_group_size,
-                    out_group_size=act_group_size
+                    out_group_size=act_group_size,
+                    clip_ratio=clip_ratio
                 )
 
             # 获取post_attention_layernorm权重用于MLP gate/up权重预乘
@@ -649,7 +651,7 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                     for k, inp in enumerate(mlp_inps_here):
                         if inp is not None and inp.numel() > 0:
                             gptq.add_batch(inp.to(cal_device), None, group_size=weight_group_size if weight_group_size > 0 else -1)
-                    gptq.fasterquant(group_size=weight_group_size, blocksize=128, percdamp=gptq_percdamp, actorder=gptq_actorder, sym=weight_sym, bits=weight_bits, dual_hadamard=False)
+                    gptq.fasterquant(group_size=weight_group_size, blocksize=128, percdamp=gptq_percdamp, actorder=gptq_actorder, sym=weight_sym, bits=weight_bits, dual_hadamard=False, clip_ratio=clip_ratio)
                     gptq.free()
                     flh_linear = flh.nn.LinearFLH(float_linear.in_features, float_linear.out_features, bias=tmp_linear.bias is not None, dtype=tmp_linear.weight.dtype, device="cpu", dual_hadamard=False, in_group_size=act_group_size, out_group_size=act_group_size)
                     flh_linear.weight.copy_(tmp_linear.weight.data.cpu())
@@ -678,9 +680,10 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                         weight_bits=weight_bits,
                         weight_group_size=weight_group_size,
                         weight_sym=weight_sym,
-                        dual_hadamard=False,  # gate/up使用单侧Hadamard
+                        dual_hadamard=False,
                         in_group_size=act_group_size,
-                        out_group_size=act_group_size
+                        out_group_size=act_group_size,
+                        clip_ratio=clip_ratio
                     )
 
             flh_layer.mlp = FLH_LlamaMLP(
@@ -709,7 +712,7 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                     out_H = down_out_H[k] if k < len(down_out_H) else None
                     if inp is not None and inp.numel() > 0:
                         gptq.add_batch(inp.to(cal_device), out_H.to(cal_device) if out_H is not None else None, group_size=weight_group_size if weight_group_size > 0 else -1)
-                gptq.fasterquant(group_size=weight_group_size, blocksize=128, percdamp=gptq_percdamp, actorder=gptq_actorder, sym=weight_sym, bits=weight_bits, dual_hadamard=True)
+                gptq.fasterquant(group_size=weight_group_size, blocksize=128, percdamp=gptq_percdamp, actorder=gptq_actorder, sym=weight_sym, bits=weight_bits, dual_hadamard=True, clip_ratio=clip_ratio)
                 gptq.free()
                 flh_layer.mlp.down_proj = flh.nn.LinearFLH(float_layer.mlp.down_proj.in_features, float_layer.mlp.down_proj.out_features, bias=tmp_linear.bias is not None, dtype=tmp_linear.weight.dtype, device="cpu", dual_hadamard=True, in_group_size=act_group_size, out_group_size=act_group_size)
                 flh_layer.mlp.down_proj.weight.copy_(tmp_linear.weight.data.cpu())
@@ -724,7 +727,8 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                     weight_sym=weight_sym,
                     dual_hadamard=True,
                     in_group_size=act_group_size,
-                    out_group_size=act_group_size
+                    out_group_size=act_group_size,
+                    clip_ratio=clip_ratio
                 )
 
             # 创建input_layernorm，保持归一化但权重设为1（因为已预乘到QKV权重中）
@@ -759,7 +763,8 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
             weight_sym=weight_sym,
             dual_hadamard=False,
             in_group_size=act_group_size,
-            out_group_size=act_group_size
+            out_group_size=act_group_size,
+            clip_ratio=clip_ratio
         )
         # 将顶层 norm 的权重设为 1（权重已融合进 lm_head）
         flh_model.model.norm.weight.data.fill_(1.0)

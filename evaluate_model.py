@@ -38,7 +38,7 @@ def load_original_model(model_name_or_path, device="cuda", dtype=torch.float16, 
     return model
 
 
-def load_model_and_tokenizer(model_name_or_path, device="cuda", dtype=torch.float16, attn_implementation="flash_attention_2", use_quantized=False, load_quantized_path=None, save_quantized_path=None, weight_sym=False, act_sym=True, use_gptq=False):
+def load_model_and_tokenizer(model_name_or_path, device="cuda", dtype=torch.float16, attn_implementation="flash_attention_2", use_quantized=False, load_quantized_path=None, save_quantized_path=None, weight_sym=False, act_sym=True, use_gptq=False, clip_ratio=1.0):
     if load_quantized_path:
         print(f"Loading pre-quantized model from {load_quantized_path}...")
         model = FLH_LlamaForCausalLM.load_quantized(load_quantized_path, target_device=device)
@@ -76,13 +76,14 @@ def load_model_and_tokenizer(model_name_or_path, device="cuda", dtype=torch.floa
         from flh.quantized_model.modeling_llama import get_calibration_dataloader
         cal_loader = get_calibration_dataloader(model_name_or_path, nsamples=32, seqlen=512) if use_gptq else None
         model = FLH_LlamaForCausalLM.from_float(
-            original_model, 
+            original_model,
             target_device=device,
             weight_sym=weight_sym,
             act_sym=act_sym,
             save_quantized_path=save_quantized_path,
             use_gptq=use_gptq,
             calibration_dataloader=cal_loader,
+            clip_ratio=clip_ratio,
         )
         
         if save_quantized_path:
@@ -447,7 +448,8 @@ def main():
         action="store_false",
         help="Use asymmetric quantization for activations"
     )
-    
+    parser.add_argument("--clip-ratio", type=float, default=1.0, help="Weight clip ratio before quantization (0,1], default 1.0")
+
     # 设置默认值（在add_argument之后）
     parser.set_defaults(act_sym=True, weight_sym=False)
     
@@ -513,28 +515,30 @@ def main():
         if args.load_quantized:
             print(f"🚀 Fast loading mode: Using pre-quantized model from {args.load_quantized}")
             flh_model, _ = load_model_and_tokenizer(
-                args.model, 
-                device=args.device, 
-                dtype=dtype, 
+                args.model,
+                device=args.device,
+                dtype=dtype,
                 attn_implementation=args.attn_implementation,
                 use_quantized=args.quantized,
                 load_quantized_path=args.load_quantized,
                 weight_sym=args.weight_sym,
                 act_sym=args.act_sym,
                 use_gptq=args.use_gptq,
+                clip_ratio=args.clip_ratio,
             )
         else:
             # 否则从原始模型量化（慢），可选择保存
             flh_model, _ = load_model_and_tokenizer(
-                args.model, 
-                device=args.device, 
-                dtype=dtype, 
+                args.model,
+                device=args.device,
+                dtype=dtype,
                 attn_implementation=args.attn_implementation,
                 use_quantized=args.quantized,
-                save_quantized_path=args.save_quantized,  # 量化完立即保存（在CPU上）
+                save_quantized_path=args.save_quantized,
                 weight_sym=args.weight_sym,
                 act_sym=args.act_sym,
                 use_gptq=args.use_gptq,
+                clip_ratio=args.clip_ratio,
             )
         
         # Evaluate FLH model

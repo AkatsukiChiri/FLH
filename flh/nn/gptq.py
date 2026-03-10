@@ -6,24 +6,29 @@ import torch.nn as nn
 from .quantization import fast_hadamard_transform
 
 
-def _sym_quantize(x, scale, maxq):
+def _sym_quantize(x, scale, maxq, clip_val=None):
     scale = scale.to(x.device)
+    if clip_val is not None:
+        x = torch.clamp(x, -clip_val, clip_val)
     q = torch.clamp(torch.round(x / scale), -(maxq + 1), maxq)
     return scale * q
 
 
-def _asym_quantize(x, scale, zero, maxq):
+def _asym_quantize(x, scale, zero, maxq, clip_val=None):
     scale = scale.to(x.device)
     zero = zero.to(x.device)
+    if clip_val is not None:
+        x = torch.clamp(x, -clip_val, clip_val)
     q = torch.clamp(torch.round(x / scale + zero), 0, maxq)
     return scale * (q - zero)
 
 
 class GPTQQuantizer:
-    def __init__(self, bits, groupsize=-1, sym=True):
+    def __init__(self, bits, groupsize=-1, sym=True, clip_ratio=1.0):
         self.bits = bits
         self.groupsize = groupsize
         self.sym = sym
+        self.clip_ratio = clip_ratio
         self.maxq = 2 ** (bits - 1) - 1 if sym else 2 ** bits - 1
         self.scale = None
         self.zero = None
@@ -31,8 +36,21 @@ class GPTQQuantizer:
     def ready(self):
         return self.scale is not None and torch.all(self.scale != 0)
 
+    def _clip_weight(self, W):
+        if self.clip_ratio >= 1.0:
+            return W
+        if self.groupsize > 0 and W.shape[1] % self.groupsize == 0:
+            Wg = W.view(W.shape[0], -1, self.groupsize)
+            max_abs = Wg.abs().amax(dim=2, keepdim=True)
+            clip_val = max_abs * self.clip_ratio
+            return torch.clamp(Wg, -clip_val, clip_val).view(W.shape)
+        max_abs = W.abs().amax(dim=1, keepdim=True)
+        clip_val = max_abs * self.clip_ratio
+        return torch.clamp(W, -clip_val, clip_val)
+
     def find_params(self, W, weight=True):
         W = W.float()
+        W = self._clip_weight(W)
         if self.bits >= 16:
             return
         dev = W.device
@@ -82,9 +100,13 @@ class GPTQQuantizer:
         zero = None
         if not self.sym and self.zero is not None:
             zero = self.zero[:, col] if self.zero.dim() > 1 and col < self.zero.shape[1] else self.zero[:, 0]
+        clip_val = None
+        if self.clip_ratio < 1.0:
+            clip_val = scale * self.maxq * self.clip_ratio
+            clip_val = clip_val.to(w.device)
         if self.sym:
-            return _sym_quantize(w, scale, self.maxq)
-        return _asym_quantize(w, scale, zero, self.maxq)
+            return _sym_quantize(w, scale, self.maxq, clip_val)
+        return _asym_quantize(w, scale, zero, self.maxq, clip_val)
 
 
 class FLHGPTQ:
@@ -125,6 +147,7 @@ class FLHGPTQ:
         sym=True,
         bits=4,
         dual_hadamard=None,
+        clip_ratio=1.0,
     ):
         if dual_hadamard is None:
             dual_hadamard = self.dual_hadamard
@@ -138,7 +161,7 @@ class FLHGPTQ:
         else:
             W = fast_hadamard_transform(W, group_size=gs)
 
-        self.quantizer = GPTQQuantizer(bits=bits, groupsize=group_size, sym=sym)
+        self.quantizer = GPTQQuantizer(bits=bits, groupsize=group_size, sym=sym, clip_ratio=clip_ratio)
 
         H = self.H
         del self.H
@@ -148,6 +171,8 @@ class FLHGPTQ:
 
         static_groups = group_size > 0
         groups = []
+        if clip_ratio < 1.0:
+            W = self.quantizer._clip_weight(W)
         if static_groups:
             for i in range(0, self.columns, group_size):
                 q = copy.deepcopy(self.quantizer)

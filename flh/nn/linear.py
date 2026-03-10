@@ -76,7 +76,7 @@ class LinearFLH(torch.nn.Module):
     
     @staticmethod    
     def from_float(module: torch.nn.Linear, weight_bits=4, weight_group_size=128, weight_sym=True,
-                   dual_hadamard=False, in_group_size=None, out_group_size=None):
+                   dual_hadamard=False, in_group_size=None, out_group_size=None, clip_ratio=1.0):
         in_features = module.in_features
         out_features = module.out_features
         bias_flag = module.bias is not None
@@ -114,7 +114,8 @@ class LinearFLH(torch.nn.Module):
             group_size=weight_group_size,
             sym=weight_sym,
             channel_wise=(weight_group_size == -1),
-            use_hadamard=False  # 禁用内部 Hadamard 变换，在外部处理
+            use_hadamard=False,
+            clip_ratio=clip_ratio
         )
         
         weight_quantizer.calibrate(flh_linear.weight)

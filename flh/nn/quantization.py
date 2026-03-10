@@ -215,13 +215,14 @@ class ActQuantizer(torch.nn.Module):
 
 
 class WeightQuantizer(torch.nn.Module):
-    def __init__(self, bits=4, group_size=-1, sym=True, channel_wise=True, use_hadamard=True):
+    def __init__(self, bits=4, group_size=-1, sym=True, channel_wise=True, use_hadamard=True, clip_ratio=1.0):
         super().__init__()
         self.bits = bits
         self.group_size = group_size
         self.sym = sym
         self.channel_wise = channel_wise
         self.use_hadamard = use_hadamard
+        self.clip_ratio = clip_ratio
         
         self.register_buffer('scale', None)
         self.register_buffer('zero_point', None)
@@ -237,6 +238,7 @@ class WeightQuantizer(torch.nn.Module):
             weight_transformed = fast_hadamard_transform(weight, group_size=self.group_size, normalize=True)
         else:
             weight_transformed = weight
+        weight_transformed = self._clip_weight(weight_transformed)
         
         with torch.no_grad():
             if self.group_size > 0:
@@ -326,12 +328,31 @@ class WeightQuantizer(torch.nn.Module):
         self.scale = scale
         self.zero_point = zero_point
     
+    def _clip_weight(self, weight):
+        if self.clip_ratio >= 1.0:
+            return weight
+        if self.group_size > 0 and weight.shape[1] % self.group_size == 0:
+            num_groups = weight.shape[1] // self.group_size
+            wg = weight.view(weight.shape[0], num_groups, self.group_size)
+            max_abs = wg.abs().amax(dim=2, keepdim=True)
+            clip_val = max_abs * self.clip_ratio
+            wg = torch.clamp(wg, -clip_val, clip_val)
+            return wg.view(weight.shape)
+        if self.channel_wise:
+            max_abs = weight.abs().amax(dim=1, keepdim=True)
+            clip_val = max_abs * self.clip_ratio
+            return torch.clamp(weight, -clip_val, clip_val)
+        max_abs = weight.abs().max()
+        clip_val = max_abs * self.clip_ratio
+        return torch.clamp(weight, -clip_val, clip_val)
+    
     def quantize(self, weight):
         # 根据 use_hadamard 参数决定是否应用 Hadamard 变换
         if self.use_hadamard:
             weight_transformed = fast_hadamard_transform(weight, group_size=self.group_size, normalize=True)
         else:
             weight_transformed = weight
+        weight_transformed = self._clip_weight(weight_transformed)
         
         if self.bits >= 16:
             return weight_transformed
