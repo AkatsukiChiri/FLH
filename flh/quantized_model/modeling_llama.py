@@ -273,7 +273,108 @@ class FLH_LlamaAttention(FLH_FP16LlamaAttention):
         self.quantizer1 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=False)
         # 第二个量化器：既量化又进行 Hadamard 变换
         self.quantizer2 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=True)
+    
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Cache] = None,
+        output_attentions: bool = False,
+        use_cache: bool = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        output_attentions = False
+
+        bsz, q_len, _ = hidden_states.size()
+
+
+        hidden_states = self.quantizer1(hidden_states)
+        scale, zp, q = hidden_states if isinstance(hidden_states, tuple) else (None, None, hidden_states)
+        query_states = self.q_proj(q, scale, zp)
+        key_states = self.k_proj(q, scale, zp)
+        value_states = self.v_proj(q, scale, zp)
+
+        # Flash attention requires the input to have the shape
+        # batch_size x seq_length x head_dim x hidden_dim
+        # therefore we just need to keep the original shape
+        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+        key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         
+        # Apply RoPE
+        cos, sin = self.rotary_emb(value_states, position_ids)
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+        # Update KV cache using transformers' standard interface
+        if past_key_value is not None:
+            # DynamicCache expects (batch, num_heads, seq_len, head_dim) format
+            # but we have (batch, seq_len, num_heads, head_dim) from Flash Attention
+            # So we need to transpose before and after cache update
+            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
+            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            # # Transpose to cache format: (batch, num_heads, seq_len, head_dim)
+            # key_states_cache = key_states.transpose(1, 2)
+            # value_states_cache = value_states.transpose(1, 2)
+            
+            # # Update cache
+            # key_states_cache, value_states_cache = past_key_value.update(
+            #     key_states_cache, value_states_cache, self.layer_idx, cache_kwargs
+            # )
+            
+            # # Transpose back to Flash Attention format: (batch, seq_len, num_heads, head_dim)
+            # key_states = key_states_cache.transpose(1, 2)
+            # value_states = value_states_cache.transpose(1, 2)
+
+        query_states = query_states.transpose(1, 2)
+        key_states = key_states.transpose(1, 2)
+        value_states = value_states.transpose(1, 2)
+        
+        dropout_rate = self.attention_dropout if self.training else 0.0
+
+        # Use Flash Attention 2
+        input_dtype = query_states.dtype
+        if input_dtype == torch.float32:
+            if torch.is_autocast_enabled():
+                target_dtype = torch.get_autocast_gpu_dtype()
+            # Handle the case where the model is quantized
+            elif hasattr(self.config, "_pre_quantization_dtype"):
+                target_dtype = self.config._pre_quantization_dtype
+            else:
+                target_dtype = self.q_proj.weight.dtype
+
+            logger.warning_once(
+                f"The input hidden states seems to be silently casted in float32, this might be related to"
+                f" the fact you have upcasted embedding or layer norm layers in float32. We will cast back the input in"
+                f" {target_dtype}."
+            )
+
+            query_states = query_states.to(target_dtype)
+            key_states = key_states.to(target_dtype)
+            value_states = value_states.to(target_dtype)
+
+        attn_output = _flash_attention_forward(
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            q_len,
+            dropout=dropout_rate,
+            sliding_window=getattr(self, "sliding_window", None),
+            use_top_left_mask=self._flash_attn_uses_top_left_mask,
+            is_causal=self.is_causal,
+        )
+
+        attn_output = attn_output.reshape(bsz, q_len, -1).contiguous()
+
+        attn_output = self.quantizer2(attn_output)
+        scale, zp, q = attn_output if isinstance(attn_output, tuple) else (None, None, attn_output)
+        attn_output = self.o_proj(q, scale, zp)
+        
+        return attn_output, None if not output_attentions else None, past_key_value
+    
+    
 class FLH_LlamaMLP(LlamaMLP):
     def __init__(self, *args, act_bits=16, act_group_size=-1, act_sym=True, **kwargs):
         super().__init__(*args, **kwargs)
@@ -787,18 +888,20 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
         fused_linear.weight.data = lm_head_float.weight.data * final_norm_weight.unsqueeze(0)
         if lm_head_float.bias is not None:
             fused_linear.bias.data.copy_(lm_head_float.bias.data)
+        fused_linear.weight.data = flh.nn.fast_hadamard_transform(fused_linear.weight.data, group_size=weight_group_size, normalize=True)
+        flh_model.lm_head = fused_linear
         
-        # 对融合后的 lm_head 做单侧 Hadamard + 量化
-        flh_model.lm_head = flh.nn.LinearFLH.from_float(
-            fused_linear,
-            weight_bits=16,
-            weight_group_size=weight_group_size,
-            weight_sym=weight_sym,
-            dual_hadamard=False,
-            in_group_size=act_group_size,
-            out_group_size=act_group_size,
-            clip_ratio=clip_ratio
-        )
+        # # 对融合后的 lm_head 做单侧 Hadamard + 量化
+        # flh_model.lm_head = flh.nn.LinearFLH.from_float(
+        #     fused_linear,
+        #     weight_bits=16,
+        #     weight_group_size=weight_group_size,
+        #     weight_sym=weight_sym,
+        #     dual_hadamard=False,
+        #     in_group_size=act_group_size,
+        #     out_group_size=act_group_size,
+        #     clip_ratio=clip_ratio
+        # )
         # 将顶层 norm 的权重设为 1（权重已融合进 lm_head）
         flh_model.model.norm.weight.data.fill_(1.0)
         

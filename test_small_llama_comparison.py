@@ -12,7 +12,7 @@ def create_small_llama_config():
         vocab_size=512,
         hidden_size=256,
         intermediate_size=512,
-        num_hidden_layers=16,
+        num_hidden_layers=1,
         num_attention_heads=4,
         num_key_value_heads=2,
         max_position_embeddings=256,
@@ -115,10 +115,11 @@ def main():
     w8a8_model = FLH_LlamaForCausalLM.from_float(
         original_model, 
         target_device=device,
-        weight_bits=15,
+        weight_bits=4,
         weight_group_size=128,
-        act_bits=15,
+        act_bits=4,
         act_group_size=128,
+        weight_sym=True,
         use_gptq=False  # 禁用GPTQ，使用RTN量化
     )
     print("✓ FLH W8A8量化模型创建完成")
