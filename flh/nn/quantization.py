@@ -149,7 +149,7 @@ class ActQuantizer(torch.nn.Module):
             x_transformed = x
         
         if self.bits >= 16:
-            return x_transformed
+            return None, None, x_transformed
         
         if self.input_clip_ratio < 1.0:
             max_abs = x_transformed.abs().amax(dim=-1, keepdim=True)
@@ -171,9 +171,9 @@ class ActQuantizer(torch.nn.Module):
                 
                 scale = max_val / qmax
                 scale = torch.clamp(scale, min=1e-8)
+                zero_point = torch.zeros_like(scale)
                 
                 x_int = (x_grouped / scale).round().clamp(qmin, qmax)
-                x_deq = x_int * scale
             else:
                 max_val = x_grouped.amax(dim=-1, keepdim=True)
                 min_val = x_grouped.amin(dim=-1, keepdim=True)
@@ -185,8 +185,7 @@ class ActQuantizer(torch.nn.Module):
                 zero_point = -min_val / scale
                 
                 x_int = ((x_grouped - min_val) / scale).round().clamp(qmin, qmax)
-                x_deq = (x_int * scale) + min_val
-            x_deq = x_deq.view(orig_shape)
+            x_int = x_int.view(orig_shape).to(x_clipped.dtype)
         else:
             if self.sym:
                 max_val = x_clipped.abs().amax(dim=-1, keepdim=True)
@@ -195,9 +194,9 @@ class ActQuantizer(torch.nn.Module):
                 
                 scale = max_val / qmax
                 scale = torch.clamp(scale, min=1e-8)
+                zero_point = torch.zeros_like(scale)
                 
                 x_int = (x_clipped / scale).round().clamp(qmin, qmax)
-                x_deq = x_int * scale
             else:
                 max_val = x_clipped.amax(dim=-1, keepdim=True)
                 min_val = x_clipped.amin(dim=-1, keepdim=True)
@@ -209,9 +208,9 @@ class ActQuantizer(torch.nn.Module):
                 zero_point = -min_val / scale
                 
                 x_int = ((x_clipped - min_val) / scale).round().clamp(qmin, qmax)
-                x_deq = (x_int * scale) + min_val
+            x_int = x_int.to(x_clipped.dtype)
         
-        return x_deq
+        return scale, zero_point, x_int
 
 
 class WeightQuantizer(torch.nn.Module):
@@ -355,7 +354,7 @@ class WeightQuantizer(torch.nn.Module):
         weight_transformed = self._clip_weight(weight_transformed)
         
         if self.bits >= 16:
-            return weight_transformed
+            return None, None, weight_transformed
         
         if not self.calibrated:
             raise RuntimeError("WeightQuantizer must be calibrated before quantization")
@@ -368,50 +367,37 @@ class WeightQuantizer(torch.nn.Module):
             qmax = 2 ** self.bits - 1
         
         if self.group_size > 0:
-            weight_quantized = self._quantize_group_wise(weight_transformed, qmin, qmax)
+            w_int = self._quantize_group_wise(weight_transformed, qmin, qmax)
         elif self.channel_wise:
-            weight_quantized = self._quantize_channel_wise(weight_transformed, qmin, qmax)
+            w_int = self._quantize_channel_wise(weight_transformed, qmin, qmax)
         else:
-            weight_quantized = self._quantize_tensor_wise(weight_transformed, qmin, qmax)
+            w_int = self._quantize_tensor_wise(weight_transformed, qmin, qmax)
         
-        return weight_quantized
+        return self.scale, self.zero_point, w_int
     
     def _quantize_tensor_wise(self, weight, qmin, qmax):
         if self.sym:
             w_int = (weight / self.scale).round().clamp(qmin, qmax)
-            w_dequant = w_int * self.scale
         else:
             w_int = (weight / self.scale + self.zero_point).round().clamp(qmin, qmax)
-            w_dequant = (w_int - self.zero_point) * self.scale
-        
-        return w_dequant
+        return w_int.to(weight.dtype)
     
     def _quantize_channel_wise(self, weight, qmin, qmax):
         if self.sym:
             w_int = (weight / self.scale).round().clamp(qmin, qmax)
-            w_dequant = w_int * self.scale
         else:
             w_int = (weight / self.scale + self.zero_point).round().clamp(qmin, qmax)
-            w_dequant = (w_int - self.zero_point) * self.scale
-        
-        return w_dequant
+        return w_int.to(weight.dtype)
     
     def _quantize_group_wise(self, weight, qmin, qmax):
         out_features, in_features = weight.shape
         num_groups = in_features // self.group_size
-        
         weight_grouped = weight.view(out_features, num_groups, self.group_size)
-        
         if self.sym:
             w_int = (weight_grouped / self.scale).round().clamp(qmin, qmax)
-            w_dequant = w_int * self.scale
         else:
             w_int = (weight_grouped / self.scale + self.zero_point).round().clamp(qmin, qmax)
-            w_dequant = (w_int - self.zero_point) * self.scale
-        
-        w_dequant = w_dequant.view(out_features, in_features)
-        
-        return w_dequant
+        return w_int.view(out_features, in_features).to(weight.dtype)
     
     def forward(self, weight):
         if not self.calibrated:

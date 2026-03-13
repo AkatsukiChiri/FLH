@@ -174,11 +174,12 @@ class FLH_FP16LlamaAttention(LlamaFlashAttention2):
 
         bsz, q_len, _ = hidden_states.size()
 
-        # 使用第一个量化器：仅量化，不做hadamard变换
         if hasattr(self, 'quantizer1'):
-            hidden_states = self.quantizer1(hidden_states)
+            out = self.quantizer1(hidden_states)
         else:
-            hidden_states = self.quantizer(hidden_states)
+            out = self.quantizer(hidden_states)
+        scale, zp, q = out if isinstance(out, tuple) else (None, None, out)
+        hidden_states = q if scale is None else (q - (zp if zp is not None else 0)) * scale
 
         query_states = self.q_proj(hidden_states)
         key_states = self.k_proj(hidden_states)
@@ -255,11 +256,12 @@ class FLH_FP16LlamaAttention(LlamaFlashAttention2):
         )
 
         attn_output = attn_output.reshape(bsz, q_len, -1).contiguous()
-        # 使用第二个量化器：hadamard变换后量化
         if hasattr(self, 'quantizer2'):
-            attn_output = self.quantizer2(attn_output)
+            out = self.quantizer2(attn_output)
         else:
-            attn_output = self.quantizer(attn_output)
+            out = self.quantizer(attn_output)
+        scale, zp, q = out if isinstance(out, tuple) else (None, None, out)
+        attn_output = q if scale is None else (q - (zp if zp is not None else 0)) * scale
         attn_output = self.o_proj(attn_output)
         return attn_output, None if not output_attentions else None, past_key_value
     
@@ -280,9 +282,11 @@ class FLH_LlamaMLP(LlamaMLP):
         self.quantizer2 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=True)
         
     def forward(self, x):
-        x = self.quantizer1(x)  # 仅量化
+        scale, zp, q = self.quantizer1(x)
+        x = q if scale is None else (q - (zp if zp is not None else 0)) * scale
         x = self.act_fn(self.gate_proj(x)) * self.up_proj(x)
-        x = self.quantizer2(x)  # 量化 + Hadamard 变换
+        scale, zp, q = self.quantizer2(x)
+        x = q if scale is None else (q - (zp if zp is not None else 0)) * scale
         return self.down_proj(x)
     
 class FLH_FP16LlamaForCausalLM(LlamaForCausalLM):
