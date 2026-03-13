@@ -173,18 +173,11 @@ class FLH_FP16LlamaAttention(LlamaFlashAttention2):
         output_attentions = False
 
         bsz, q_len, _ = hidden_states.size()
-
-        if hasattr(self, 'quantizer1'):
-            hidden_states = self.quantizer1(hidden_states)
-            scale, zp, q = hidden_states if isinstance(hidden_states, tuple) else (None, None, hidden_states)
-            query_states = self.q_proj(q, scale, zp)
-            key_states = self.k_proj(q, scale, zp)
-            value_states = self.v_proj(q, scale, zp)
-        else:
-            hidden_states = self.quantizer(hidden_states)
-            query_states = self.q_proj(hidden_states)
-            key_states = self.k_proj(hidden_states)
-            value_states = self.v_proj(hidden_states)
+            
+        hidden_states = self.quantizer(hidden_states)
+        query_states = self.q_proj(hidden_states)
+        key_states = self.k_proj(hidden_states)
+        value_states = self.v_proj(hidden_states)
 
         # Flash attention requires the input to have the shape
         # batch_size x seq_length x head_dim x hidden_dim
@@ -257,13 +250,9 @@ class FLH_FP16LlamaAttention(LlamaFlashAttention2):
         )
 
         attn_output = attn_output.reshape(bsz, q_len, -1).contiguous()
-        if hasattr(self, 'quantizer2'):
-            attn_output = self.quantizer2(attn_output)
-            scale, zp, q = attn_output if isinstance(attn_output, tuple) else (None, None, attn_output)
-            attn_output = self.o_proj(q, scale, zp)
-        else:
-            attn_output = self.quantizer(attn_output)
-            attn_output = self.o_proj(attn_output)
+            
+        attn_output = self.quantizer(attn_output)
+        attn_output = self.o_proj(attn_output)
         return attn_output, None if not output_attentions else None, past_key_value
     
 class FLH_LlamaAttention(FLH_FP16LlamaAttention):
