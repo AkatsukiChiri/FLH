@@ -6,7 +6,7 @@ from . import quantization as _quant
 
 class LinearFLH(torch.nn.Module):
     def __init__(self, in_features, out_features, bias=False, dtype=torch.float16, device='cpu',
-                 dual_hadamard=False, in_group_size=None, out_group_size=None):
+                 dual_hadamard=False, in_group_size=None, out_group_size=None, no_hadamard=False):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -14,6 +14,7 @@ class LinearFLH(torch.nn.Module):
         self.in_group_size = in_group_size
         self.out_group_size = out_group_size
         self.weight_group_size = None
+        self.no_hadamard = no_hadamard
         
         self.register_buffer('w_int', None)
         self.register_buffer('w_scale', None)
@@ -53,11 +54,41 @@ class LinearFLH(torch.nn.Module):
                 weight = (w_int - zp_eff) * scale
         else:
             weight = w_int
+            
         return torch.nn.functional.linear(x, weight.to(x.dtype), self.bias)
+    
+    def get_weight(self, dtype: torch.dtype | None = None) -> torch.Tensor:
+        scale = self.w_scale
+        zp = self.w_zero
+        w_int = self.w_int
+        if w_int is None:
+            raise RuntimeError("LinearFLH: w_int is None, layer has not been quantized correctly.")
+        if scale is not None:
+            if self.weight_group_size is not None and self.weight_group_size > 0 and scale.dim() == 3:
+                out_features, in_features = w_int.shape
+                group_size = self.weight_group_size
+                num_groups = in_features // group_size
+                w_int_3d = w_int.view(out_features, num_groups, group_size)
+                zp_eff = zp if zp is not None else 0
+                w_deq_3d = (w_int_3d - zp_eff) * scale
+                weight = w_deq_3d.view(out_features, in_features)
+            else:
+                zp_eff = zp if zp is not None else 0
+                weight = (w_int - zp_eff) * scale
+        else:
+            weight = w_int
+        if dtype is not None:
+            weight = weight.to(dtype)
+        return weight
+    
+    def set_weight(self, weight: torch.Tensor):
+        self.w_int = weight
+        self.w_scale = None
+        self.w_zero = None
     
     @staticmethod    
     def from_float(module: torch.nn.Linear, weight_bits=4, weight_group_size=128, weight_sym=True,
-                   dual_hadamard=False, in_group_size=None, out_group_size=None, clip_ratio=1.0):
+                   dual_hadamard=False, in_group_size=None, out_group_size=None, clip_ratio=1.0, no_hadamard=False):
         in_features = module.in_features
         out_features = module.out_features
         bias_flag = module.bias is not None
@@ -72,7 +103,7 @@ class LinearFLH(torch.nn.Module):
             device=device,
             dual_hadamard=dual_hadamard,
             in_group_size=in_group_size,
-            out_group_size=out_group_size
+            out_group_size=out_group_size,
         )
         
         W = module.weight.data.clone()
@@ -80,30 +111,35 @@ class LinearFLH(torch.nn.Module):
             flh_linear.bias.copy_(module.bias.data)
         
         # 应用 Hadamard 变换到权重和偏置
-        if dual_hadamard:
-            W_temp = _quant.fast_hadamard_transform(
-                W,
-                group_size=in_group_size,
-                normalize=True,
-            )
-            W = _quant.fast_hadamard_transform(
-                W_temp.T,
-                group_size=out_group_size,
-                normalize=True,
-            ).T
-            if bias_flag:
-                b_dual = _quant.fast_hadamard_transform(
-                    flh_linear.bias.unsqueeze(0),
+        if not no_hadamard:
+            if dual_hadamard:
+                W_temp = _quant.fast_hadamard_transform(
+                    W,
+                    group_size=in_group_size,
+                    normalize=True,
+                )
+                W = _quant.fast_hadamard_transform(
+                    W_temp.T,
                     group_size=out_group_size,
                     normalize=True,
-                ).squeeze(0)
-                flh_linear.bias.copy_(b_dual)
+                ).T
+                if bias_flag:
+                    b_dual = _quant.fast_hadamard_transform(
+                        flh_linear.bias.unsqueeze(0),
+                        group_size=out_group_size,
+                        normalize=True,
+                    ).squeeze(0)
+                    flh_linear.bias.copy_(b_dual)
+            else:
+                W = _quant.fast_hadamard_transform(
+                    W,
+                    group_size=in_group_size,
+                    normalize=True,
+                )
         else:
-            W = _quant.fast_hadamard_transform(
-                W,
-                group_size=in_group_size,
-                normalize=True,
-            )
+            W = W
+            if bias_flag:
+                flh_linear.bias.copy_(module.bias.data)
         
         if torch.isnan(W).any():
             print(f"WARNING: NaN detected in weights after Hadamard for layer {out_features}x{in_features}")
@@ -142,6 +178,10 @@ if __name__ == "__main__":
     y_ref = layer(x)
     
     layer_flh = LinearFLH.from_float(layer, weight_bits=15, weight_group_size=-1, weight_sym=True)
+    
+    print(layer_flh.get_weight())
+    print(layer.weight.data)
+    
     scale, zp, q = _quant.ActQuantizer(bits=15, group_size=-1, sym=True)(x)
     x_flh = q if scale is None else (q - (zp if zp is not None else 0)) * scale
     

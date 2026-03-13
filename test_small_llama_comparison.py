@@ -15,7 +15,7 @@ def create_small_llama_config():
         num_hidden_layers=16,
         num_attention_heads=4,
         num_key_value_heads=2,
-        max_position_embeddings=128,
+        max_position_embeddings=256,
         rms_norm_eps=1e-6,
         _attn_implementation='flash_attention_2'
     )
@@ -115,9 +115,9 @@ def main():
     w8a8_model = FLH_LlamaForCausalLM.from_float(
         original_model, 
         target_device=device,
-        weight_bits=16,
+        weight_bits=15,
         weight_group_size=128,
-        act_bits=16,
+        act_bits=15,
         act_group_size=128,
         use_gptq=False  # 禁用GPTQ，使用RTN量化
     )

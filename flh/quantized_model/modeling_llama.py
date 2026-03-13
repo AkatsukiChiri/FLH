@@ -175,15 +175,16 @@ class FLH_FP16LlamaAttention(LlamaFlashAttention2):
         bsz, q_len, _ = hidden_states.size()
 
         if hasattr(self, 'quantizer1'):
-            out = self.quantizer1(hidden_states)
+            hidden_states = self.quantizer1(hidden_states)
+            scale, zp, q = hidden_states if isinstance(hidden_states, tuple) else (None, None, hidden_states)
+            query_states = self.q_proj(q, scale, zp)
+            key_states = self.k_proj(q, scale, zp)
+            value_states = self.v_proj(q, scale, zp)
         else:
-            out = self.quantizer(hidden_states)
-        scale, zp, q = out if isinstance(out, tuple) else (None, None, out)
-        hidden_states = q if scale is None else (q - (zp if zp is not None else 0)) * scale
-
-        query_states = self.q_proj(hidden_states)
-        key_states = self.k_proj(hidden_states)
-        value_states = self.v_proj(hidden_states)
+            hidden_states = self.quantizer(hidden_states)
+            query_states = self.q_proj(hidden_states)
+            key_states = self.k_proj(hidden_states)
+            value_states = self.v_proj(hidden_states)
 
         # Flash attention requires the input to have the shape
         # batch_size x seq_length x head_dim x hidden_dim
@@ -257,12 +258,12 @@ class FLH_FP16LlamaAttention(LlamaFlashAttention2):
 
         attn_output = attn_output.reshape(bsz, q_len, -1).contiguous()
         if hasattr(self, 'quantizer2'):
-            out = self.quantizer2(attn_output)
+            attn_output = self.quantizer2(attn_output)
+            scale, zp, q = attn_output if isinstance(attn_output, tuple) else (None, None, attn_output)
+            attn_output = self.o_proj(q, scale, zp)
         else:
-            out = self.quantizer(attn_output)
-        scale, zp, q = out if isinstance(out, tuple) else (None, None, out)
-        attn_output = q if scale is None else (q - (zp if zp is not None else 0)) * scale
-        attn_output = self.o_proj(attn_output)
+            attn_output = self.quantizer(attn_output)
+            attn_output = self.o_proj(attn_output)
         return attn_output, None if not output_attentions else None, past_key_value
     
 class FLH_LlamaAttention(FLH_FP16LlamaAttention):
@@ -283,11 +284,11 @@ class FLH_LlamaMLP(LlamaMLP):
         
     def forward(self, x):
         scale, zp, q = self.quantizer1(x)
-        x = q if scale is None else (q - (zp if zp is not None else 0)) * scale
-        x = self.act_fn(self.gate_proj(x)) * self.up_proj(x)
+        # x = q if scale is None else (q - (zp if zp is not None else 0)) * scale
+        x = self.act_fn(self.gate_proj(q, scale, zp)) * self.up_proj(q, scale, zp)
         scale, zp, q = self.quantizer2(x)
-        x = q if scale is None else (q - (zp if zp is not None else 0)) * scale
-        return self.down_proj(x)
+        # x = q if scale is None else (q - (zp if zp is not None else 0)) * scale
+        return self.down_proj(q, scale, zp)
     
 class FLH_FP16LlamaForCausalLM(LlamaForCausalLM):
     def __init__(self, config):
@@ -570,10 +571,17 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                     gptq.fasterquant(group_size=weight_group_size, blocksize=128, percdamp=gptq_percdamp, actorder=gptq_actorder, sym=weight_sym, bits=weight_bits, dual_hadamard=False, clip_ratio=clip_ratio)
                     
                     gptq.free()
-                    flh_linear = flh.nn.LinearFLH(float_linear.in_features, float_linear.out_features, bias=tmp_linear.bias is not None, dtype=tmp_linear.weight.dtype, device="cpu", dual_hadamard=False, in_group_size=act_group_size, out_group_size=act_group_size)
-                    flh_linear.weight.copy_(tmp_linear.weight.data.cpu())
-                    if flh_linear.bias is not None:
-                        flh_linear.bias.copy_(tmp_linear.bias.data.cpu())
+                    flh_linear = flh.nn.LinearFLH.from_float(
+                        tmp_linear.cpu(),
+                        weight_bits=weight_bits,
+                        weight_group_size=weight_group_size,
+                        weight_sym=weight_sym,
+                        dual_hadamard=False,
+                        in_group_size=act_group_size,
+                        out_group_size=act_group_size,
+                        clip_ratio=clip_ratio,
+                        no_hadamard=True
+                    )
                     del tmp_linear, gptq
                     return flh_linear
                 else:
@@ -624,10 +632,17 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                         gptq.add_batch(inp.to(cal_device), None, group_size=weight_group_size if weight_group_size > 0 else -1)
                 gptq.fasterquant(group_size=weight_group_size, blocksize=128, percdamp=gptq_percdamp, actorder=gptq_actorder, sym=weight_sym, bits=weight_bits, dual_hadamard=True, clip_ratio=clip_ratio)
                 gptq.free()
-                flh_layer.self_attn.o_proj = flh.nn.LinearFLH(float_layer.self_attn.o_proj.in_features, float_layer.self_attn.o_proj.out_features, bias=tmp_linear.bias is not None, dtype=tmp_linear.weight.dtype, device="cpu", dual_hadamard=True, in_group_size=act_group_size, out_group_size=act_group_size)
-                flh_layer.self_attn.o_proj.weight.copy_(tmp_linear.weight.data.cpu())
-                if flh_layer.self_attn.o_proj.bias is not None:
-                    flh_layer.self_attn.o_proj.bias.copy_(tmp_linear.bias.data.cpu())
+                flh_layer.self_attn.o_proj = flh.nn.LinearFLH.from_float(
+                    tmp_linear.cpu(),
+                    weight_bits=weight_bits,
+                    weight_group_size=weight_group_size,
+                    weight_sym=weight_sym,
+                    dual_hadamard=True,
+                    in_group_size=act_group_size,
+                    out_group_size=act_group_size,
+                    clip_ratio=clip_ratio,
+                    no_hadamard=True
+                )
                 del tmp_linear, gptq
             else:
                 flh_layer.self_attn.o_proj = flh.nn.LinearFLH.from_float(
@@ -657,10 +672,17 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                             gptq.add_batch(inp.to(cal_device), None, group_size=weight_group_size if weight_group_size > 0 else -1)
                     gptq.fasterquant(group_size=weight_group_size, blocksize=128, percdamp=gptq_percdamp, actorder=gptq_actorder, sym=weight_sym, bits=weight_bits, dual_hadamard=False, clip_ratio=clip_ratio)
                     gptq.free()
-                    flh_linear = flh.nn.LinearFLH(float_linear.in_features, float_linear.out_features, bias=tmp_linear.bias is not None, dtype=tmp_linear.weight.dtype, device="cpu", dual_hadamard=False, in_group_size=act_group_size, out_group_size=act_group_size)
-                    flh_linear.weight.copy_(tmp_linear.weight.data.cpu())
-                    if flh_linear.bias is not None:
-                        flh_linear.bias.copy_(tmp_linear.bias.data.cpu())
+                    flh_linear = flh.nn.LinearFLH.from_float(
+                        tmp_linear.cpu(),
+                        weight_bits=weight_bits,
+                        weight_group_size=weight_group_size,
+                        weight_sym=weight_sym,
+                        dual_hadamard=False,
+                        in_group_size=act_group_size,
+                        out_group_size=act_group_size,
+                        clip_ratio=clip_ratio,
+                        no_hadamard=True
+                    )
                     del tmp_linear, gptq
                     return flh_linear
                 # 创建临时线性层，权重已预乘norm权重
@@ -718,10 +740,17 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                         gptq.add_batch(inp.to(cal_device), out_H.to(cal_device) if out_H is not None else None, group_size=weight_group_size if weight_group_size > 0 else -1)
                 gptq.fasterquant(group_size=weight_group_size, blocksize=128, percdamp=gptq_percdamp, actorder=gptq_actorder, sym=weight_sym, bits=weight_bits, dual_hadamard=True, clip_ratio=clip_ratio)
                 gptq.free()
-                flh_layer.mlp.down_proj = flh.nn.LinearFLH(float_layer.mlp.down_proj.in_features, float_layer.mlp.down_proj.out_features, bias=tmp_linear.bias is not None, dtype=tmp_linear.weight.dtype, device="cpu", dual_hadamard=True, in_group_size=act_group_size, out_group_size=act_group_size)
-                flh_layer.mlp.down_proj.weight.copy_(tmp_linear.weight.data.cpu())
-                if flh_layer.mlp.down_proj.bias is not None:
-                    flh_layer.mlp.down_proj.bias.copy_(tmp_linear.bias.data.cpu())
+                flh_layer.mlp.down_proj = flh.nn.LinearFLH.from_float(
+                    tmp_linear.cpu(),
+                    weight_bits=weight_bits,
+                    weight_group_size=weight_group_size,
+                    weight_sym=weight_sym,
+                    dual_hadamard=True,
+                    in_group_size=act_group_size,
+                    out_group_size=act_group_size,
+                    clip_ratio=clip_ratio,
+                    no_hadamard=True
+                )
                 del tmp_linear, gptq
             else:
                 flh_layer.mlp.down_proj = flh.nn.LinearFLH.from_float(
