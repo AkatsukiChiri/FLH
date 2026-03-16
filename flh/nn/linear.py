@@ -125,8 +125,12 @@ class LinearFLH(torch.nn.Module):
         else:
             self.w_packed.copy_(w_packed_vals[:self.w_packed.size(0)])
     
-    def forward(self, x, a_scale=None, a_zero=None):
-        if a_scale is not None:
+    def forward(self, x, a_scale=None, a_zero=None, x_is_packed=False, is_symmetric=None):
+        # 如果输入是 packed 4bit 格式，先解包
+        if x_is_packed:
+            x = self._unpack_activation_4bit(x, a_scale, a_zero, is_symmetric)
+        elif a_scale is not None:
+            # 输入是普通量化格式，进行反量化
             zp_a = a_zero if a_zero is not None else 0
             if a_scale.dim() == x.dim() + 1 and a_scale.size(-1) == 1:
                 group_size = self.in_group_size
@@ -138,7 +142,7 @@ class LinearFLH(torch.nn.Module):
         
         # 解包并反量化权重
         weight = self._unpack_weights()
-            
+        x = x.to(weight.dtype)
         return torch.nn.functional.linear(x, weight.to(x.dtype), self.bias)
     
     def get_weight(self, dtype: torch.dtype | None = None) -> torch.Tensor:
@@ -272,6 +276,87 @@ class LinearFLH(torch.nn.Module):
 
         return flh_linear
     
+    def _unpack_activation_4bit(self, x_packed, a_scale, a_zero, is_symmetric=None):
+        """解包 4bit 激活值并反量化 (GPU 并行化版本)"""
+        device = x_packed.device
+        orig_shape = x_packed.shape
+        
+        # 计算原始激活的形状
+        packed_elements = x_packed.numel()
+        total_elements = packed_elements * 8  # 每个 int32 包含 8 个 4bit 值
+        
+        # 展平 packed 数据
+        x_packed_flat = x_packed.flatten()
+        
+        # 使用 GPU 向量化操作解包 4bit 值
+        element_indices = torch.arange(total_elements, dtype=torch.int32, device=device)
+        packed_indices = element_indices // 8
+        bit_offsets = (element_indices % 8) * 4
+        
+        # 向量化提取 4bit 值
+        x_4bit = torch.zeros(total_elements, dtype=torch.int32, device=device)
+        valid_mask = packed_indices < x_packed_flat.size(0)
+        
+        if valid_mask.any():
+            packed_vals = x_packed_flat[packed_indices[valid_mask]]
+            bit_offs = bit_offsets[valid_mask]
+            extracted_4bit = (packed_vals >> bit_offs) & 0xF
+            x_4bit[valid_mask] = extracted_4bit.int()
+        
+        # 根据量化类型处理符号
+        if is_symmetric is None:
+            # 通过 zero_point 推断量化类型
+            if a_zero is not None and torch.any(a_zero != 0):
+                is_symmetric = False  # 非对称量化有非零 zero_point
+            else:
+                is_symmetric = True   # 对称量化 zero_point 为 0
+        
+        if is_symmetric:
+            # 对称量化：转换为有符号 4bit (-8 到 7)
+            x_4bit = torch.where(x_4bit >= 8, x_4bit - 16, x_4bit)
+        # 非对称量化：保持无符号 4bit (0 到 15)
+        
+        # 计算反量化后的形状
+        if self.in_group_size and self.in_group_size > 0:
+            # Group-wise 激活量化
+            expected_features = self.in_features
+            # 截取到正确的特征数量
+            actual_elements = orig_shape[:-1].numel() * expected_features
+            x_4bit = x_4bit[:actual_elements]
+            
+            # Reshape 到正确的形状
+            activation_shape = orig_shape[:-1] + (expected_features,)
+            x_int = x_4bit.view(activation_shape).float()
+            
+            # Group-wise 反量化
+            if a_scale is not None:
+                zp_a = a_zero if a_zero is not None else 0
+                if a_scale.dim() == x_int.dim() + 1 and a_scale.size(-1) == 1:
+                    group_size = self.in_group_size
+                    n_groups = x_int.size(-1) // group_size
+                    x_view = x_int.view(*x_int.shape[:-1], n_groups, group_size)
+                    x_float = ((x_view - zp_a) * a_scale).view_as(x_int)
+                else:
+                    x_float = (x_int - zp_a) * a_scale
+            else:
+                x_float = x_int
+        else:
+            # Per-channel 或 per-tensor 激活量化
+            expected_features = self.in_features
+            actual_elements = orig_shape[:-1].numel() * expected_features
+            x_4bit = x_4bit[:actual_elements]
+            
+            activation_shape = orig_shape[:-1] + (expected_features,)
+            x_int = x_4bit.view(activation_shape).float()
+            
+            if a_scale is not None:
+                zp_a = a_zero if a_zero is not None else 0
+                x_float = (x_int - zp_a) * a_scale
+            else:
+                x_float = x_int
+        
+        return x_float
+
 
 if __name__ == "__main__":
     layer = torch.nn.Linear(1024, 1024)

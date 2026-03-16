@@ -12,7 +12,7 @@ def create_small_llama_config():
         vocab_size=512,
         hidden_size=256,
         intermediate_size=512,
-        num_hidden_layers=1,
+        num_hidden_layers=2,
         num_attention_heads=4,
         num_key_value_heads=2,
         max_position_embeddings=256,
@@ -69,7 +69,7 @@ def test_generation_difference(original_model, flh_model, model_name, input_ids)
         # 原始模型生成
         original_outputs = original_model.generate(
             input_ids, 
-            max_new_tokens=1,
+            max_new_tokens=2,
             do_sample=False,
             pad_token_id=0
         )
@@ -77,7 +77,7 @@ def test_generation_difference(original_model, flh_model, model_name, input_ids)
         # FLH模型生成
         flh_outputs = flh_model.generate(
             input_ids,
-            max_new_tokens=1, 
+            max_new_tokens=2, 
             do_sample=False,
             pad_token_id=0
         )
@@ -120,6 +120,7 @@ def main():
         act_bits=4,
         act_group_size=128,
         weight_sym=True,
+        act_sym=False,
         use_gptq=False  # 禁用GPTQ，使用RTN量化
     )
     print("✓ FLH W8A8量化模型创建完成")

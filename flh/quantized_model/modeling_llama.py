@@ -259,9 +259,9 @@ class FLH_LlamaAttention(FLH_FP16LlamaAttention):
     def __init__(self, *args, act_bits=16, act_group_size=-1, act_sym=True, **kwargs):
         super().__init__(*args, **kwargs)
         # 第一个量化器：仅量化，不进行 Hadamard 变换
-        self.quantizer1 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=False)
+        self.quantizer1 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=False, packed_output=True)
         # 第二个量化器：既量化又进行 Hadamard 变换
-        self.quantizer2 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=True)
+        self.quantizer2 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=True, packed_output=True)
     
     def forward(
         self,
@@ -278,12 +278,11 @@ class FLH_LlamaAttention(FLH_FP16LlamaAttention):
 
         bsz, q_len, _ = hidden_states.size()
 
-
-        hidden_states = self.quantizer1(hidden_states)
-        scale, zp, q = hidden_states if isinstance(hidden_states, tuple) else (None, None, hidden_states)
-        query_states = self.q_proj(q, scale, zp)
-        key_states = self.k_proj(q, scale, zp)
-        value_states = self.v_proj(q, scale, zp)
+        scale, zp, q = self.quantizer1(hidden_states)
+        
+        query_states = self.q_proj(q, scale, zp, x_is_packed=True)
+        key_states = self.k_proj(q, scale, zp, x_is_packed=True)
+        value_states = self.v_proj(q, scale, zp, x_is_packed=True)
 
         # Flash attention requires the input to have the shape
         # batch_size x seq_length x head_dim x hidden_dim
@@ -331,7 +330,7 @@ class FLH_LlamaAttention(FLH_FP16LlamaAttention):
             elif hasattr(self.config, "_pre_quantization_dtype"):
                 target_dtype = self.config._pre_quantization_dtype
             else:
-                target_dtype = self.q_proj.weight.dtype
+                target_dtype = self.q_proj.get_weight().dtype
 
             logger.warning_once(
                 f"The input hidden states seems to be silently casted in float32, this might be related to"
@@ -357,9 +356,8 @@ class FLH_LlamaAttention(FLH_FP16LlamaAttention):
 
         attn_output = attn_output.reshape(bsz, q_len, -1).contiguous()
 
-        attn_output = self.quantizer2(attn_output)
-        scale, zp, q = attn_output if isinstance(attn_output, tuple) else (None, None, attn_output)
-        attn_output = self.o_proj(q, scale, zp)
+        scale, zp, q = self.quantizer2(attn_output)
+        attn_output = self.o_proj(q, scale, zp, x_is_packed=True)
         
         return attn_output, None if not output_attentions else None, past_key_value
     
@@ -368,17 +366,15 @@ class FLH_LlamaMLP(LlamaMLP):
     def __init__(self, *args, act_bits=16, act_group_size=-1, act_sym=True, **kwargs):
         super().__init__(*args, **kwargs)
         # 第一个量化器：仅量化，不进行 Hadamard 变换
-        self.quantizer1 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=False)
+        self.quantizer1 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=False, packed_output=True)
         # 第二个量化器：既量化又进行 Hadamard 变换
-        self.quantizer2 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=True)
+        self.quantizer2 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=True, packed_output=True)
         
     def forward(self, x):
         scale, zp, q = self.quantizer1(x)
-        # x = q if scale is None else (q - (zp if zp is not None else 0)) * scale
-        x = self.act_fn(self.gate_proj(q, scale, zp)) * self.up_proj(q, scale, zp)
+        x = self.act_fn(self.gate_proj(q, scale, zp, x_is_packed=True)) * self.up_proj(q, scale, zp, x_is_packed=True)
         scale, zp, q = self.quantizer2(x)
-        # x = q if scale is None else (q - (zp if zp is not None else 0)) * scale
-        return self.down_proj(q, scale, zp)
+        return self.down_proj(q, scale, zp, x_is_packed=True)
     
 class FLH_FP16LlamaForCausalLM(LlamaForCausalLM):
     def __init__(self, config):

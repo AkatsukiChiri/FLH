@@ -133,13 +133,17 @@ def fast_hadamard_transform(x, group_size=None, normalize=True):
 
 
 class ActQuantizer(torch.nn.Module):
-    def __init__(self, bits=8, group_size=-1, sym=True, input_clip_ratio=1.0, use_hadamard=True):
+    def __init__(self, bits=8, group_size=-1, sym=True, input_clip_ratio=1.0, use_hadamard=True, packed_output=False):
         super().__init__()
         self.bits = bits
         self.group_size = group_size
         self.sym = sym
         self.input_clip_ratio = input_clip_ratio
         self.use_hadamard = use_hadamard
+        self.packed_output = packed_output
+        
+        if self.packed_output and self.bits != 4:
+            raise ValueError("Packed output is only supported for 4-bit quantization")
         
     def forward(self, x):
         # 根据 use_hadamard 参数决定是否进行 Hadamard 变换
@@ -210,7 +214,67 @@ class ActQuantizer(torch.nn.Module):
                 x_int = ((x_clipped - min_val) / scale).round().clamp(qmin, qmax)
             x_int = x_int.to(x_clipped.dtype)
         
-        return scale, zero_point, x_int
+        # 如果需要 packed 输出，将 4bit 数据打包到 int32
+        if self.packed_output:
+            x_packed = self._pack_4bit_to_int32(x_int)
+            return scale, zero_point, x_packed
+        else:
+            return scale, zero_point, x_int
+    
+    def _pack_4bit_to_int32(self, x_int):
+        """将 4bit 量化值打包到 int32 (每个 int32 存储 8 个 4bit 值)"""
+        device = x_int.device
+        orig_shape = x_int.shape
+        
+        # 展平
+        x_flat = x_int.flatten().int()
+        
+        if self.sym:
+            # 对称量化：限制在 4bit 有符号范围内 (-8 到 7)
+            x_clamped = torch.clamp(x_flat, -8, 7)
+            # 转换为无符号 4bit (0 到 15)
+            x_unsigned = torch.where(x_clamped < 0, x_clamped + 16, x_clamped)
+        else:
+            # 非对称量化：限制在 4bit 无符号范围内 (0 到 15)
+            x_unsigned = torch.clamp(x_flat, 0, 15)
+        
+        # 填充到 8 的倍数
+        total_elements = x_unsigned.size(0)
+        if total_elements % 8 != 0:
+            padding = 8 - (total_elements % 8)
+            x_unsigned = torch.cat([x_unsigned, torch.zeros(padding, dtype=x_unsigned.dtype, device=device)])
+        
+        # Reshape 为 (packed_size, 8)
+        x_reshaped = x_unsigned.view(-1, 8)
+        
+        # 向量化打包：每 8 个 4bit 值打包成一个 int32
+        bit_shifts = torch.arange(8, dtype=torch.int32, device=device) * 4  # [0, 4, 8, 12, 16, 20, 24, 28]
+        shift_powers = torch.pow(2, bit_shifts).int()  # [1, 16, 256, 4096, ...]
+        x_shifted = x_reshaped.int() * shift_powers.unsqueeze(0)  # 广播乘法
+        x_packed_vals = x_shifted.sum(dim=1)  # 按位或运算的等价操作
+        
+        # 计算 packed 后的形状
+        packed_size = x_packed_vals.size(0)
+        if len(orig_shape) == 1:
+            # 1D 输入
+            return x_packed_vals
+        else:
+            # 多维输入，计算正确的 packed 维度
+            last_dim = orig_shape[-1]
+            packed_last_dim = (last_dim + 7) // 8  # 每 8 个元素打包成 1 个
+            new_shape = orig_shape[:-1] + (packed_last_dim,)
+            
+            # 确保 packed_vals 的大小与目标形状匹配
+            target_size = torch.tensor(new_shape).prod().item()
+            if packed_size != target_size:
+                # 如果大小不匹配，截取或填充
+                if packed_size > target_size:
+                    x_packed_vals = x_packed_vals[:target_size]
+                else:
+                    padding = target_size - packed_size
+                    x_packed_vals = torch.cat([x_packed_vals, torch.zeros(padding, dtype=x_packed_vals.dtype, device=x_packed_vals.device)])
+            
+            return x_packed_vals.view(new_shape)
 
 
 class WeightQuantizer(torch.nn.Module):
