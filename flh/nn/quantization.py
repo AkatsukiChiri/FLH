@@ -238,20 +238,17 @@ class ActQuantizer(torch.nn.Module):
             # 非对称量化：限制在 4bit 无符号范围内 (0 到 15)
             x_unsigned = torch.clamp(x_flat, 0, 15)
         
-        # 填充到 8 的倍数
+        # 填充到 2 的倍数
         total_elements = x_unsigned.size(0)
-        if total_elements % 8 != 0:
-            padding = 8 - (total_elements % 8)
-            x_unsigned = torch.cat([x_unsigned, torch.zeros(padding, dtype=x_unsigned.dtype, device=device)])
+        if total_elements % 2 != 0:
+            x_unsigned = torch.cat([x_unsigned, torch.zeros(1, dtype=x_unsigned.dtype, device=device)])
         
-        # Reshape 为 (packed_size, 8)
-        x_reshaped = x_unsigned.view(-1, 8)
+        # Reshape 为 (packed_size, 2)
+        x_reshaped = x_unsigned.view(-1, 2)
         
-        # 向量化打包：每 8 个 4bit 值打包成一个 int32
-        bit_shifts = torch.arange(8, dtype=torch.int32, device=device) * 4  # [0, 4, 8, 12, 16, 20, 24, 28]
-        shift_powers = torch.pow(2, bit_shifts).int()  # [1, 16, 256, 4096, ...]
-        x_shifted = x_reshaped.int() * shift_powers.unsqueeze(0)  # 广播乘法
-        x_packed_vals = x_shifted.sum(dim=1)  # 按位或运算的等价操作
+        # 向量化打包：每 2 个 4bit 值打包成一个 uint8
+        # 低4位存储第一个值，高4位存储第二个值
+        x_packed_vals = x_reshaped[:, 0] + (x_reshaped[:, 1] << 4)
         
         # 计算 packed 后的形状
         packed_size = x_packed_vals.size(0)
@@ -261,7 +258,7 @@ class ActQuantizer(torch.nn.Module):
         else:
             # 多维输入，计算正确的 packed 维度
             last_dim = orig_shape[-1]
-            packed_last_dim = (last_dim + 7) // 8  # 每 8 个元素打包成 1 个
+            packed_last_dim = (last_dim + 1) // 2  # 每 2 个元素打包成 1 个
             new_shape = orig_shape[:-1] + (packed_last_dim,)
             
             # 确保 packed_vals 的大小与目标形状匹配

@@ -16,18 +16,18 @@ class LinearFLH(torch.nn.Module):
         self.weight_group_size = group_size
         self.no_hadamard = no_hadamard
         
-        # 4bit 量化：每个 int32 存储 8 个 4bit 权重
-        packed_size = (out_features * in_features + 7) // 8
-        self.register_buffer('w_packed', torch.zeros(packed_size, dtype=torch.int32, device=device))
+        # 4bit 量化：每个 uint8 存储 2 个 4bit 权重
+        packed_size = (out_features * in_features + 1) // 2
+        self.register_buffer('w_packed', torch.zeros(packed_size, dtype=torch.uint8, device=device))
         
         # Group-wise 量化参数
         if group_size > 0:
             num_groups = (in_features + group_size - 1) // group_size
             self.register_buffer('w_scale', torch.zeros(out_features, num_groups, dtype=dtype, device=device))
-            self.register_buffer('w_zero', torch.zeros(out_features, num_groups, dtype=torch.int32, device=device))
+            self.register_buffer('w_zero', torch.zeros(out_features, num_groups, dtype=torch.uint8, device=device))
         else:
             self.register_buffer('w_scale', torch.zeros(out_features, 1, dtype=dtype, device=device))
-            self.register_buffer('w_zero', torch.zeros(out_features, 1, dtype=torch.int32, device=device))
+            self.register_buffer('w_zero', torch.zeros(out_features, 1, dtype=torch.uint8, device=device))
         
         if bias:
             self.register_buffer('bias', torch.zeros((self.out_features), dtype=dtype, device=device))
@@ -45,18 +45,18 @@ class LinearFLH(torch.nn.Module):
         
         # 创建索引张量
         element_indices = torch.arange(total_elements, dtype=torch.int32, device=device)
-        packed_indices = element_indices // 8
-        bit_offsets = (element_indices % 8) * 4
+        packed_indices = element_indices // 2  # 每个 uint8 存储 2 个 4bit
+        bit_offsets = (element_indices % 2) * 4  # 0 或 4
         
         # 向量化提取 4bit 值
         w_4bit = torch.zeros(total_elements, dtype=torch.int32, device=device)
         valid_mask = packed_indices < packed_size
         
         if valid_mask.any():
-            packed_vals = self.w_packed[packed_indices[valid_mask]]
+            packed_vals = self.w_packed[packed_indices[valid_mask]].int()
             bit_offs = bit_offsets[valid_mask]
             extracted_4bit = (packed_vals >> bit_offs) & 0xF
-            w_4bit[valid_mask] = extracted_4bit.int()
+            w_4bit[valid_mask] = extracted_4bit
         
         # 转换为有符号 4bit (-8 到 7)
         w_4bit = torch.where(w_4bit >= 8, w_4bit - 16, w_4bit)
@@ -92,7 +92,7 @@ class LinearFLH(torch.nn.Module):
         
         # 存储量化参数
         self.w_scale.copy_(scale)
-        self.w_zero.copy_(zero.int())
+        self.w_zero.copy_(zero.clamp(0, 15).to(torch.uint8))
         
         # 将权重限制在 4bit 有符号范围内 (-8 到 7)
         w_clamped = torch.clamp(w_int.flatten(), -8, 7).int()
@@ -102,28 +102,25 @@ class LinearFLH(torch.nn.Module):
         
         # 计算需要的 packed 数量
         total_elements = w_unsigned.size(0)
-        packed_size = (total_elements + 7) // 8
+        packed_size = (total_elements + 1) // 2
         
-        # 填充到 8 的倍数
-        if total_elements % 8 != 0:
-            padding = 8 - (total_elements % 8)
-            w_unsigned = torch.cat([w_unsigned, torch.zeros(padding, dtype=w_unsigned.dtype, device=device)])
+        # 填充到 2 的倍数
+        if total_elements % 2 != 0:
+            w_unsigned = torch.cat([w_unsigned, torch.zeros(1, dtype=w_unsigned.dtype, device=device)])
         
-        # Reshape 为 (packed_size, 8)
-        w_reshaped = w_unsigned.view(-1, 8)
+        # Reshape 为 (packed_size, 2)
+        w_reshaped = w_unsigned.view(-1, 2)
         
-        # 向量化打包：每 8 个 4bit 值打包成一个 int32
-        bit_shifts = torch.arange(8, dtype=torch.int32, device=device) * 4  # [0, 4, 8, 12, 16, 20, 24, 28]
-        shift_powers = torch.pow(2, bit_shifts).int()  # [1, 16, 256, 4096, ...]
-        w_shifted = w_reshaped.int() * shift_powers.unsqueeze(0)  # 广播乘法
-        w_packed_vals = w_shifted.sum(dim=1)  # 按位或运算的等价操作
+        # 向量化打包：每 2 个 4bit 值打包成一个 uint8
+        # 低4位存储第一个值，高4位存储第二个值
+        w_packed_vals = w_reshaped[:, 0] + (w_reshaped[:, 1] << 4)
         
         # 更新 packed 权重
         self.w_packed.zero_()
         if w_packed_vals.size(0) <= self.w_packed.size(0):
-            self.w_packed[:w_packed_vals.size(0)] = w_packed_vals
+            self.w_packed[:w_packed_vals.size(0)] = w_packed_vals.to(torch.uint8)
         else:
-            self.w_packed.copy_(w_packed_vals[:self.w_packed.size(0)])
+            self.w_packed.copy_(w_packed_vals[:self.w_packed.size(0)].to(torch.uint8))
     
     def forward(self, x, a_scale=None, a_zero=None, x_is_packed=False, is_symmetric=None):
         # 如果输入是 packed 4bit 格式，先解包
@@ -177,7 +174,7 @@ class LinearFLH(torch.nn.Module):
         else:
             # Per-tensor: expand to (out_features, 1)
             scale = scale.expand(self.out_features, 1)
-            zero = zero.expand(self.out_features, 1) if zero is not None else torch.zeros(self.out_features, 1, dtype=torch.int32, device=weight.device)
+            zero = zero.expand(self.out_features, 1) if zero is not None else torch.zeros(self.out_features, 1, dtype=torch.uint8, device=weight.device)
         
         self._pack_weights(w_int, scale, zero)
     
@@ -270,7 +267,7 @@ class LinearFLH(torch.nn.Module):
         else:
             # Per-tensor: expand to (out_features, 1)
             scale = scale.expand(out_features, 1)
-            zp = zp.expand(out_features, 1) if zp is not None else torch.zeros(out_features, 1, dtype=torch.int32, device=W.device)
+            zp = zp.expand(out_features, 1) if zp is not None else torch.zeros(out_features, 1, dtype=torch.uint8, device=W.device)
         
         flh_linear._pack_weights(w_int, scale, zp)
 
@@ -283,25 +280,25 @@ class LinearFLH(torch.nn.Module):
         
         # 计算原始激活的形状
         packed_elements = x_packed.numel()
-        total_elements = packed_elements * 8  # 每个 int32 包含 8 个 4bit 值
+        total_elements = packed_elements * 2  # 每个 uint8 包含 2 个 4bit 值
         
         # 展平 packed 数据
         x_packed_flat = x_packed.flatten()
         
         # 使用 GPU 向量化操作解包 4bit 值
         element_indices = torch.arange(total_elements, dtype=torch.int32, device=device)
-        packed_indices = element_indices // 8
-        bit_offsets = (element_indices % 8) * 4
+        packed_indices = element_indices // 2  # 每个 uint8 存储 2 个 4bit
+        bit_offsets = (element_indices % 2) * 4  # 0 或 4
         
         # 向量化提取 4bit 值
         x_4bit = torch.zeros(total_elements, dtype=torch.int32, device=device)
         valid_mask = packed_indices < x_packed_flat.size(0)
         
         if valid_mask.any():
-            packed_vals = x_packed_flat[packed_indices[valid_mask]]
+            packed_vals = x_packed_flat[packed_indices[valid_mask]].int()
             bit_offs = bit_offsets[valid_mask]
             extracted_4bit = (packed_vals >> bit_offs) & 0xF
-            x_4bit[valid_mask] = extracted_4bit.int()
+            x_4bit[valid_mask] = extracted_4bit
         
         # 根据量化类型处理符号
         if is_symmetric is None:
