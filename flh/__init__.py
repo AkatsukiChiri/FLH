@@ -15,6 +15,14 @@ try:
         _cuda_extension_available = True
 except (ImportError, AttributeError):
     pass
+ 
+if not _cuda_extension_available:
+    try:
+        from .cuda import load_flh_cuda_ext
+        _CUDA = load_flh_cuda_ext()
+        _cuda_extension_available = True
+    except Exception:
+        pass
 
 if not _cuda_extension_available:
     try:

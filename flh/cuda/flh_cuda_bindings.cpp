@@ -1,0 +1,61 @@
+#include <torch/extension.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <cuda_fp16.h>
+ 
+extern "C" void flhDenseLayerGEMM_i4_o16(
+  const uint8_t* A,
+  const uint8_t* B,
+  const half* A_scale,
+  const half* B_scale,
+  half* D,
+  size_t M_GLOBAL,
+  size_t N_GLOBAL,
+  size_t K_GLOBAL
+);
+ 
+static torch::Tensor gemm_i4_dequant_o16(
+  const torch::Tensor& A,
+  const torch::Tensor& B,
+  const torch::Tensor& A_scale,
+  const torch::Tensor& B_scale
+){
+  TORCH_CHECK(A.is_cuda() && B.is_cuda() && A_scale.is_cuda() && B_scale.is_cuda(), "tensors must be CUDA");
+  TORCH_CHECK(A.scalar_type() == torch::kUInt8, "A must be uint8 packed int4");
+  TORCH_CHECK(B.scalar_type() == torch::kUInt8, "B must be uint8 packed int4");
+  TORCH_CHECK(A_scale.scalar_type() == torch::kFloat16, "A_scale must be float16");
+  TORCH_CHECK(B_scale.scalar_type() == torch::kFloat16, "B_scale must be float16");
+  TORCH_CHECK(A.is_contiguous() && B.is_contiguous() && A_scale.is_contiguous() && B_scale.is_contiguous(), "tensors must be contiguous");
+  TORCH_CHECK(A.dim() == 2 && B.dim() == 2, "A/B must be 2D");
+  TORCH_CHECK(A_scale.dim() == 2 && B_scale.dim() == 2, "scale must be 2D");
+ 
+  const int64_t M = A.size(0);
+  const int64_t K_packed = A.size(1);
+  const int64_t K = K_packed * 2;
+  const int64_t N = B.size(0);
+  TORCH_CHECK(B.size(1) == K_packed, "B.shape[1] must equal A.shape[1]");
+ 
+  TORCH_CHECK(A_scale.size(0) == M, "A_scale.shape[0] must equal M");
+  TORCH_CHECK(B_scale.size(0) == N, "B_scale.shape[0] must equal N");
+ 
+  auto D = torch::empty({M, N}, torch::TensorOptions().device(A.device()).dtype(torch::kFloat16));
+ 
+  flhDenseLayerGEMM_i4_o16(
+    (const uint8_t*)A.data_ptr<uint8_t>(),
+    (const uint8_t*)B.data_ptr<uint8_t>(),
+    (const half*)A_scale.data_ptr<at::Half>(),
+    (const half*)B_scale.data_ptr<at::Half>(),
+    (half*)D.data_ptr<at::Half>(),
+    (size_t)M,
+    (size_t)N,
+    (size_t)K
+  );
+ 
+  return D;
+}
+ 
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+  m.def("gemm_i4_dequant_o16", &gemm_i4_dequant_o16, "int4 GEMM with sync dequant (fp16 out)");
+}
+
