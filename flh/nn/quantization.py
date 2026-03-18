@@ -1,5 +1,7 @@
 import torch
 import math
+from math import sqrt
+import flh
 
 # 缓存小Hadamard矩阵
 _HADAMARD_CACHE = {}
@@ -111,7 +113,7 @@ def had_transform_group(X: torch.Tensor, transpose=False, group_size: int = 128)
     return input.view(X.shape) / math.sqrt(float(n))
 
 
-def fast_hadamard_transform(x, group_size=None, normalize=True):
+def fast_hadamard_transform(x, group_size=None, normalize=True, use_cuda=True):
     """
     快速Walsh-Hadamard变换统一接口
     
@@ -120,15 +122,20 @@ def fast_hadamard_transform(x, group_size=None, normalize=True):
     :param normalize: 是否归一化（已在内部实现，此参数保持兼容性）
     :return: 变换后的张量
     """
-    orig_dtype = x.dtype
-    x_f64 = x.to(torch.float64)
-    if group_size is not None and group_size > 0:
-        out = had_transform_group(x_f64, transpose=False, group_size=group_size)
+    if use_cuda and x.dtype == torch.float16 and x.device.type == 'cuda':
+        x_copy = x.clone().view(-1, 128)
+        x_copy = flh._CUDA.hadamard_transform_half(x_copy) / sqrt(128)
+        return x_copy.view(x.shape)        
     else:
-        out = had_transform(x_f64, transpose=False)
-    if orig_dtype == torch.float64:
-        return out
-    return out.to(orig_dtype)
+        orig_dtype = x.dtype
+        x_f64 = x.to(torch.float64)
+        if group_size is not None and group_size > 0:
+            out = had_transform_group(x_f64, transpose=False, group_size=group_size)
+        else:
+            out = had_transform(x_f64, transpose=False)
+        if orig_dtype == torch.float64:
+            return out
+        return out.to(orig_dtype)
 
 
 

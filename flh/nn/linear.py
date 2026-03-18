@@ -219,11 +219,13 @@ class LinearFLH(torch.nn.Module):
                     W,
                     group_size=in_group_size,
                     normalize=True,
+                    use_cuda=False
                 )
                 W = _quant.fast_hadamard_transform(
                     W_temp.T,
                     group_size=out_group_size,
                     normalize=True,
+                    use_cuda=False
                 ).T
                 if bias_flag:
                     b_dual = _quant.fast_hadamard_transform(

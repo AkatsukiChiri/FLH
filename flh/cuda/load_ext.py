@@ -21,6 +21,7 @@ def load_flh_cuda_ext():
   sources = [
     str(this_dir / "flh_cuda_bindings.cpp"),
     str(root / "flh" / "kernels" / "gemm_and_dequant_i4.cu"),
+    str(root / "flh" / "kernels" / "cuda_had_kernel.cu"),
   ]
  
   extra_cuda_cflags = [

@@ -14,6 +14,9 @@ extern "C" void flhDenseLayerGEMM_i4_o16(
   size_t N_GLOBAL,
   size_t K_GLOBAL
 );
+
+// Hadamard transform kernel (implemented in cuda_had_kernel.cu)
+void had_trans_half_cuda(torch::Tensor& data);
  
 static torch::Tensor gemm_i4_dequant_o16(
   const torch::Tensor& A,
@@ -54,8 +57,22 @@ static torch::Tensor gemm_i4_dequant_o16(
  
   return D;
 }
- 
+
+static torch::Tensor hadamard_transform_half(
+  torch::Tensor& input
+) {
+  TORCH_CHECK(input.is_cuda(), "Input tensor must be on CUDA");
+  TORCH_CHECK(input.scalar_type() == torch::kFloat16, "Input tensor must be float16 (half)");
+  TORCH_CHECK(input.dim() == 2, "Input tensor must be 2D");
+  TORCH_CHECK(input.size(1) == 128, "Last dimension must be 128");
+
+  had_trans_half_cuda(input);
+
+  return input;
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("gemm_i4_dequant_o16", &gemm_i4_dequant_o16, "int4 GEMM with sync dequant (fp16 out)");
+  m.def("hadamard_transform_half", &hadamard_transform_half, "In-place Hadamard transform for (M, 128) half matrix");
 }
 

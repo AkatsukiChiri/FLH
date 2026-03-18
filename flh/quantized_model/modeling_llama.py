@@ -92,7 +92,7 @@ def _collect_calibration_inputs_flh(model, dataloader, device, nsamples, seqlen,
                 original_inp = inp[0].detach()
                 inputs_list.append(original_inp.cpu())
                 if need_out_H and out is not None:
-                    out_detach = out.detach().float()
+                    out_detach = out.detach()
                     out_H = flh.nn.fast_hadamard_transform(out_detach, group_size=gs, normalize=True)
                     out_H_list.append(out_H.cpu())
             return hook, inputs_list, out_H_list
