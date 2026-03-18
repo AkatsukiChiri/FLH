@@ -123,6 +123,15 @@ class LinearFLH(torch.nn.Module):
             self.w_packed.copy_(w_packed_vals[:self.w_packed.size(0)].to(torch.uint8))
     
     def forward(self, x, a_scale=None, a_zero=None, x_is_packed=False, is_symmetric=None):
+        x_shape= x.shape
+        
+        return flh._CUDA.gemm_i4_dequant_o16(
+            x.view(-1, x.size(-1)), 
+            self.w_packed.view(self.out_features, self.in_features // 2), 
+            a_scale.view(x.shape[0], -1), 
+            self.w_scale.view(self.out_features, -1)
+        ).view(x_shape[:-1] + (self.out_features,))
+    def forward_torch(self, x, a_scale=None, a_zero=None, x_is_packed=False, is_symmetric=None):
         # 如果输入是 packed 4bit 格式，先解包
         if x_is_packed:
             x = self._unpack_activation_4bit(x, a_scale, a_zero, is_symmetric)
@@ -328,13 +337,11 @@ class LinearFLH(torch.nn.Module):
             # Group-wise 反量化
             if a_scale is not None:
                 zp_a = a_zero if a_zero is not None else 0
-                if a_scale.dim() == x_int.dim() + 1 and a_scale.size(-1) == 1:
-                    group_size = self.in_group_size
-                    n_groups = x_int.size(-1) // group_size
-                    x_view = x_int.view(*x_int.shape[:-1], n_groups, group_size)
-                    x_float = ((x_view - zp_a) * a_scale).view_as(x_int)
-                else:
-                    x_float = (x_int - zp_a) * a_scale
+                
+                group_size = self.in_group_size
+                n_groups = x_int.size(-1) // group_size
+                x_view = x_int.view(*x_int.shape[:-1], n_groups, group_size)
+                x_float = ((x_view - zp_a.view(x_view.shape[:-1] + (1,))) * a_scale.view(x_view.shape[:-1] + (1,))).view_as(x_int)
             else:
                 x_float = x_int
         else:

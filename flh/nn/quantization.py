@@ -167,7 +167,6 @@ class ActQuantizer(torch.nn.Module):
             n_groups = x_clipped.size(-1) // self.group_size
             new_shape = x_clipped.shape[:-1] + (n_groups, self.group_size)
             x_grouped = x_clipped.view(new_shape)
-
             if self.sym:
                 max_val = x_grouped.abs().amax(dim=-1, keepdim=True)
                 qmin = -2 ** (self.bits - 1)
@@ -175,9 +174,11 @@ class ActQuantizer(torch.nn.Module):
                 
                 scale = max_val / qmax
                 scale = torch.clamp(scale, min=1e-8)
-                zero_point = torch.zeros_like(scale)
                 
                 x_int = (x_grouped / scale).round().clamp(qmin, qmax)
+                
+                scale = scale.view(x_clipped.shape[:-1] + (n_groups,))
+                zero_point = torch.zeros_like(scale)
             else:
                 max_val = x_grouped.amax(dim=-1, keepdim=True)
                 min_val = x_grouped.amin(dim=-1, keepdim=True)
@@ -189,6 +190,9 @@ class ActQuantizer(torch.nn.Module):
                 zero_point = -min_val / scale
                 
                 x_int = ((x_grouped - min_val) / scale).round().clamp(qmin, qmax)
+                scale = scale.view(x_clipped.shape[:-1] + (n_groups,))
+                zero_point = zero_point.view(x_clipped.shape[:-1] + (n_groups,))
+                
             x_int = x_int.view(orig_shape).to(x_clipped.dtype)
         else:
             if self.sym:
@@ -214,41 +218,39 @@ class ActQuantizer(torch.nn.Module):
                 x_int = ((x_clipped - min_val) / scale).round().clamp(qmin, qmax)
             x_int = x_int.to(x_clipped.dtype)
         
-        # 如果需要 packed 输出，将 4bit 数据打包到 int32
+        # 如果需要 packed 输出，将 4bit 数据打包到 uint8
         if self.packed_output:
-            x_packed = self._pack_4bit_to_int32(x_int)
+            x_packed = self._pack_4bit_to_uint8(x_int)
             return scale, zero_point, x_packed
         else:
             return scale, zero_point, x_int
     
-    def _pack_4bit_to_int32(self, x_int):
-        """将 4bit 量化值打包到 int32 (每个 int32 存储 8 个 4bit 值)"""
+    def _pack_4bit_to_uint8(self, x_int):
+        """将 4bit 量化值打包到 uint8 (每个 uint8 存储 2 个 4bit 值)"""
         device = x_int.device
         orig_shape = x_int.shape
         
         # 展平
-        x_flat = x_int.flatten().int()
+        x_flat = x_int.flatten().to(torch.int8)
         
         if self.sym:
             # 对称量化：限制在 4bit 有符号范围内 (-8 到 7)
-            x_clamped = torch.clamp(x_flat, -8, 7)
-            # 转换为无符号 4bit (0 到 15)
-            x_unsigned = torch.where(x_clamped < 0, x_clamped + 16, x_clamped)
+            x_4bit = torch.clamp(x_flat, -8, 7)
         else:
             # 非对称量化：限制在 4bit 无符号范围内 (0 到 15)
-            x_unsigned = torch.clamp(x_flat, 0, 15)
+            x_4bit = torch.clamp(x_flat, 0, 15)
         
         # 填充到 2 的倍数
-        total_elements = x_unsigned.size(0)
+        total_elements = x_4bit.size(0)
         if total_elements % 2 != 0:
-            x_unsigned = torch.cat([x_unsigned, torch.zeros(1, dtype=x_unsigned.dtype, device=device)])
+            x_4bit = torch.cat([x_4bit, torch.zeros(1, dtype=x_4bit.dtype, device=device)])
         
         # Reshape 为 (packed_size, 2)
-        x_reshaped = x_unsigned.view(-1, 2)
+        x_reshaped = x_4bit.view(-1, 2)
         
         # 向量化打包：每 2 个 4bit 值打包成一个 uint8
         # 低4位存储第一个值，高4位存储第二个值
-        x_packed_vals = x_reshaped[:, 0] + (x_reshaped[:, 1] << 4)
+        x_packed_vals = (x_reshaped[:, 0] & 0x0F) | ((x_reshaped[:, 1] & 0x0F) << 4)
         
         # 计算 packed 后的形状
         packed_size = x_packed_vals.size(0)
@@ -271,7 +273,7 @@ class ActQuantizer(torch.nn.Module):
                     padding = target_size - packed_size
                     x_packed_vals = torch.cat([x_packed_vals, torch.zeros(padding, dtype=x_packed_vals.dtype, device=x_packed_vals.device)])
             
-            return x_packed_vals.view(new_shape)
+            return x_packed_vals.view(new_shape).to(torch.uint8)
 
 
 class WeightQuantizer(torch.nn.Module):
@@ -351,8 +353,8 @@ class WeightQuantizer(torch.nn.Module):
             scale = torch.clamp(scale, min=1e-8)
             zero_point = qmin - min_val / scale
         
-        self.scale = scale
-        self.zero_point = zero_point
+        self.scale = scale.view(out_features, 1)
+        self.zero_point = zero_point.view(out_features, 1)
     
     def _calibrate_group_wise(self, weight):
         out_features, in_features = weight.shape
@@ -385,8 +387,8 @@ class WeightQuantizer(torch.nn.Module):
             scale = torch.clamp(scale, min=1e-8)
             zero_point = qmin - min_val / scale
         
-        self.scale = scale
-        self.zero_point = zero_point
+        self.scale = scale.view(out_features, num_groups)
+        self.zero_point = zero_point.view(out_features, num_groups)
     
     def _clip_weight(self, weight):
         if self.clip_ratio >= 1.0:
@@ -455,9 +457,9 @@ class WeightQuantizer(torch.nn.Module):
         num_groups = in_features // self.group_size
         weight_grouped = weight.view(out_features, num_groups, self.group_size)
         if self.sym:
-            w_int = (weight_grouped / self.scale).round().clamp(qmin, qmax)
+            w_int = (weight_grouped / self.scale.view(out_features, num_groups, 1)).round().clamp(qmin, qmax)
         else:
-            w_int = (weight_grouped / self.scale + self.zero_point).round().clamp(qmin, qmax)
+            w_int = (weight_grouped / self.scale.view(out_features, num_groups, 1) + self.zero_point.view(out_features, num_groups, 1)).round().clamp(qmin, qmax)
         return w_int.view(out_features, in_features).to(weight.dtype)
     
     def forward(self, weight):

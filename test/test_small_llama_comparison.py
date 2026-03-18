@@ -120,7 +120,7 @@ def main():
         act_bits=4,
         act_group_size=128,
         weight_sym=True,
-        act_sym=False,
+        act_sym=True,
         use_gptq=False  # 禁用GPTQ，使用RTN量化
     )
     print("✓ FLH W8A8量化模型创建完成")
