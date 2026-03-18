@@ -128,7 +128,7 @@ class LinearFLH(torch.nn.Module):
         return flh._CUDA.gemm_i4_dequant_o16(
             x.view(-1, x.size(-1)), 
             self.w_packed.view(self.out_features, self.in_features // 2), 
-            a_scale.view(x.shape[0], -1), 
+            a_scale.view(-1, self.in_features // self.in_group_size), 
             self.w_scale.view(self.out_features, -1)
         ).view(x_shape[:-1] + (self.out_features,))
     def forward_torch(self, x, a_scale=None, a_zero=None, x_is_packed=False, is_symmetric=None):
