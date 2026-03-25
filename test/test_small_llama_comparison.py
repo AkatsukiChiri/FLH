@@ -12,7 +12,7 @@ def create_small_llama_config():
         vocab_size=512,
         hidden_size=256,
         intermediate_size=512,
-        num_hidden_layers=2,
+        num_hidden_layers=8,
         num_attention_heads=4,
         num_key_value_heads=2,
         max_position_embeddings=256,

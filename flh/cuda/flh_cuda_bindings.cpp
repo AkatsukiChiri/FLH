@@ -3,6 +3,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
+#include "../kernels/had_and_quant.h"
  
 extern "C" void flhDenseLayerGEMM_i4_o16(
   const uint8_t* A,
@@ -18,6 +19,22 @@ extern "C" void flhDenseLayerGEMM_i4_o16(
 // Hadamard transform kernel (implemented in cuda_had_kernel.cu)
 void had_trans_half_cuda(torch::Tensor& data);
  
+// Fused hadamard transform + int4 quantization kernel (implemented in had_and_quant.cu)
+void had_and_quant_host(
+  const half* data,
+  Int4Storage* quantized_data,
+  half* scales,
+  uint32_t M
+);
+
+// Quantization + packing kernel (no Hadamard, implemented in quant_and_pack.cu)
+void quant_and_pack_host(
+  const half* data,
+  Int4Storage* quantized_data,
+  half* scales,
+  uint32_t M
+);
+
 static torch::Tensor gemm_i4_dequant_o16(
   const torch::Tensor& A,
   const torch::Tensor& B,
@@ -71,8 +88,56 @@ static torch::Tensor hadamard_transform_half(
   return input;
 }
 
+static std::vector<torch::Tensor> hadamard_and_quantize_i4(
+  const torch::Tensor& input
+) {
+  TORCH_CHECK(input.is_cuda(), "Input tensor must be on CUDA");
+  TORCH_CHECK(input.scalar_type() == torch::kFloat16, "Input tensor must be float16 (half)");
+  TORCH_CHECK(input.dim() == 2, "Input tensor must be 2D");
+  TORCH_CHECK(input.size(1) == 128, "Last dimension must be 128");
+  TORCH_CHECK(input.is_contiguous(), "Input tensor must be contiguous");
+
+  const int64_t M = input.size(0);
+  auto q = torch::empty({M, 64}, torch::TensorOptions().device(input.device()).dtype(torch::kUInt8));
+  auto scales = torch::empty({M}, torch::TensorOptions().device(input.device()).dtype(torch::kFloat16));
+
+  had_and_quant_host(
+    (const half*)input.data_ptr<at::Half>(),
+    (Int4Storage*)q.data_ptr<uint8_t>(),
+    (half*)scales.data_ptr<at::Half>(),
+    (uint32_t)M
+  );
+
+  return {q, scales};
+}
+
+static std::vector<torch::Tensor> quant_and_pack_i4(
+  const torch::Tensor& input
+) {
+  TORCH_CHECK(input.is_cuda(), "Input tensor must be on CUDA");
+  TORCH_CHECK(input.scalar_type() == torch::kFloat16, "Input tensor must be float16 (half)");
+  TORCH_CHECK(input.dim() == 2, "Input tensor must be 2D");
+  TORCH_CHECK(input.size(1) == 128, "Last dimension must be 128");
+  TORCH_CHECK(input.is_contiguous(), "Input tensor must be contiguous");
+
+  const int64_t M = input.size(0);
+  auto q = torch::empty({M, 64}, torch::TensorOptions().device(input.device()).dtype(torch::kUInt8));
+  auto scales = torch::empty({M}, torch::TensorOptions().device(input.device()).dtype(torch::kFloat16));
+
+  quant_and_pack_host(
+    (const half*)input.data_ptr<at::Half>(),
+    (Int4Storage*)q.data_ptr<uint8_t>(),
+    (half*)scales.data_ptr<at::Half>(),
+    (uint32_t)M
+  );
+
+  return {q, scales};
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("gemm_i4_dequant_o16", &gemm_i4_dequant_o16, "int4 GEMM with sync dequant (fp16 out)");
   m.def("hadamard_transform_half", &hadamard_transform_half, "In-place Hadamard transform for (M, 128) half matrix");
+  m.def("hadamard_and_quantize_i4", &hadamard_and_quantize_i4, "Fused Hadamard transform + int4 quantization (returns packed uint8 and scales)");
+  m.def("quant_and_pack_i4", &quant_and_pack_i4, "Symmetric int4 quantization + packing (no Hadamard, returns packed uint8 and scales)");
 }
 

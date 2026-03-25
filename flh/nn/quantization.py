@@ -152,7 +152,15 @@ class ActQuantizer(torch.nn.Module):
         if self.packed_output and self.bits != 4:
             raise ValueError("Packed output is only supported for 4-bit quantization")
         
+    
     def forward(self, x):
+        if self.use_hadamard:
+            q, scales = flh._CUDA.hadamard_and_quantize_i4(x.view(-1, 128))
+            return (scales / sqrt(128)).view(x.shape[:-1] + (x.shape[-1] // 128,)), None, q.view(x.shape[:-1] + (x.shape[-1] // 2,))
+        else:
+            q, scales = flh._CUDA.quant_and_pack_i4(x.view(-1, 128))
+            return scales.view(x.shape[:-1] + (x.shape[-1] // 128,)), None, q.view(x.shape[:-1] + (x.shape[-1] // 2,))
+    def forward_origin(self, x):
         # 根据 use_hadamard 参数决定是否进行 Hadamard 变换
         if self.use_hadamard:
             x_transformed = fast_hadamard_transform(x, group_size=self.group_size, normalize=True)

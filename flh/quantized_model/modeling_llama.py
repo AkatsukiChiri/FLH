@@ -159,6 +159,60 @@ class FLH_FP16LlamaAttention(LlamaFlashAttention2):
         self.quantizer = torch.nn.Identity()
         self.o_proj_hadamard = torch.nn.Identity()
 
+    def _replace_with_flh_linear(self, weight_bits=4, weight_group_size=128, weight_sym=False,
+                                   act_group_size=-1, dual_hadamard=False, no_hadamard=False, clip_ratio=1.0):
+        """将普通 Linear 层替换为 LinearFLH（在 init 时调用）"""
+        device = self.q_proj.weight.device
+        dtype = self.q_proj.weight.dtype
+        
+        # 替换 q_proj (单侧 Hadamard)
+        self.q_proj = flh.nn.LinearFLH(
+            self.q_proj.in_features, self.q_proj.out_features,
+            bias=self.q_proj.bias is not None,
+            dtype=dtype, device=device,
+            dual_hadamard=False,
+            in_group_size=act_group_size,
+            out_group_size=act_group_size,
+            group_size=weight_group_size,
+            no_hadamard=no_hadamard
+        )
+        
+        # 替换 k_proj (单侧 Hadamard)
+        self.k_proj = flh.nn.LinearFLH(
+            self.k_proj.in_features, self.k_proj.out_features,
+            bias=self.k_proj.bias is not None,
+            dtype=dtype, device=device,
+            dual_hadamard=False,
+            in_group_size=act_group_size,
+            out_group_size=act_group_size,
+            group_size=weight_group_size,
+            no_hadamard=no_hadamard
+        )
+        
+        # 替换 v_proj (单侧 Hadamard)
+        self.v_proj = flh.nn.LinearFLH(
+            self.v_proj.in_features, self.v_proj.out_features,
+            bias=self.v_proj.bias is not None,
+            dtype=dtype, device=device,
+            dual_hadamard=False,
+            in_group_size=act_group_size,
+            out_group_size=act_group_size,
+            group_size=weight_group_size,
+            no_hadamard=no_hadamard
+        )
+        
+        # 替换 o_proj (双侧 Hadamard)
+        self.o_proj = flh.nn.LinearFLH(
+            self.o_proj.in_features, self.o_proj.out_features,
+            bias=self.o_proj.bias is not None,
+            dtype=dtype, device=device,
+            dual_hadamard=dual_hadamard,
+            in_group_size=act_group_size,
+            out_group_size=act_group_size,
+            group_size=weight_group_size,
+            no_hadamard=no_hadamard
+        )
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -256,12 +310,66 @@ class FLH_FP16LlamaAttention(LlamaFlashAttention2):
         return attn_output, None if not output_attentions else None, past_key_value
     
 class FLH_LlamaAttention(FLH_FP16LlamaAttention):
-    def __init__(self, *args, act_bits=16, act_group_size=-1, act_sym=True, **kwargs):
+    def __init__(self, *args, act_bits=16, act_group_size=-1, act_sym=True, 
+                 weight_bits=4, weight_group_size=128, weight_sym=False, clip_ratio=1.0, **kwargs):
         super().__init__(*args, **kwargs)
         # 第一个量化器：仅量化，不进行 Hadamard 变换
         self.quantizer1 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=False, packed_output=True)
         # 第二个量化器：既量化又进行 Hadamard 变换
         self.quantizer2 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=True, packed_output=True)
+        
+        # 在 init 时将 q/k/v Linear 层替换为 LinearFLH（用于 save/load_quantized）
+        # o_proj 单独创建，因为它使用双侧 Hadamard
+        device = self.q_proj.weight.device
+        dtype = self.q_proj.weight.dtype
+        
+        # 替换 q_proj (单侧 Hadamard)
+        self.q_proj = flh.nn.LinearFLH(
+            self.q_proj.in_features, self.q_proj.out_features,
+            bias=self.q_proj.bias is not None,
+            dtype=dtype, device=device,
+            dual_hadamard=False,
+            in_group_size=act_group_size,
+            out_group_size=act_group_size,
+            group_size=weight_group_size,
+            no_hadamard=True
+        )
+        
+        # 替换 k_proj (单侧 Hadamard)
+        self.k_proj = flh.nn.LinearFLH(
+            self.k_proj.in_features, self.k_proj.out_features,
+            bias=self.k_proj.bias is not None,
+            dtype=dtype, device=device,
+            dual_hadamard=False,
+            in_group_size=act_group_size,
+            out_group_size=act_group_size,
+            group_size=weight_group_size,
+            no_hadamard=True
+        )
+        
+        # 替换 v_proj (单侧 Hadamard)
+        self.v_proj = flh.nn.LinearFLH(
+            self.v_proj.in_features, self.v_proj.out_features,
+            bias=self.v_proj.bias is not None,
+            dtype=dtype, device=device,
+            dual_hadamard=False,
+            in_group_size=act_group_size,
+            out_group_size=act_group_size,
+            group_size=weight_group_size,
+            no_hadamard=True
+        )
+        
+        # o_proj 使用双侧 Hadamard
+        self.o_proj = flh.nn.LinearFLH(
+            self.o_proj.in_features, self.o_proj.out_features,
+            bias=self.o_proj.bias is not None,
+            dtype=dtype, device=device,
+            dual_hadamard=True,
+            in_group_size=act_group_size,
+            out_group_size=act_group_size,
+            group_size=weight_group_size,
+            no_hadamard=True
+        )
     
     def forward(
         self,
@@ -363,12 +471,53 @@ class FLH_LlamaAttention(FLH_FP16LlamaAttention):
     
     
 class FLH_LlamaMLP(LlamaMLP):
-    def __init__(self, *args, act_bits=16, act_group_size=-1, act_sym=True, **kwargs):
+    def __init__(self, *args, act_bits=16, act_group_size=-1, act_sym=True,
+                 weight_bits=4, weight_group_size=128, weight_sym=False, clip_ratio=1.0, **kwargs):
         super().__init__(*args, **kwargs)
         # 第一个量化器：仅量化，不进行 Hadamard 变换
         self.quantizer1 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=False, packed_output=True)
         # 第二个量化器：既量化又进行 Hadamard 变换
         self.quantizer2 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=True, packed_output=True)
+        
+        # 在 init 时将 Linear 层替换为 LinearFLH（用于 save/load_quantized）
+        device = self.gate_proj.weight.device
+        dtype = self.gate_proj.weight.dtype
+        
+        # 替换 gate_proj (单侧 Hadamard)
+        self.gate_proj = flh.nn.LinearFLH(
+            self.gate_proj.in_features, self.gate_proj.out_features,
+            bias=self.gate_proj.bias is not None,
+            dtype=dtype, device=device,
+            dual_hadamard=False,
+            in_group_size=act_group_size,
+            out_group_size=act_group_size,
+            group_size=weight_group_size,
+            no_hadamard=True
+        )
+        
+        # 替换 up_proj (单侧 Hadamard)
+        self.up_proj = flh.nn.LinearFLH(
+            self.up_proj.in_features, self.up_proj.out_features,
+            bias=self.up_proj.bias is not None,
+            dtype=dtype, device=device,
+            dual_hadamard=False,
+            in_group_size=act_group_size,
+            out_group_size=act_group_size,
+            group_size=weight_group_size,
+            no_hadamard=True
+        )
+        
+        # 替换 down_proj (双侧 Hadamard)
+        self.down_proj = flh.nn.LinearFLH(
+            self.down_proj.in_features, self.down_proj.out_features,
+            bias=self.down_proj.bias is not None,
+            dtype=dtype, device=device,
+            dual_hadamard=True,
+            in_group_size=act_group_size,
+            out_group_size=act_group_size,
+            group_size=weight_group_size,
+            no_hadamard=True
+        )
         
     def forward(self, x):
         scale, zp, q = self.quantizer1(x)
@@ -474,7 +623,7 @@ class FLH_FP16LlamaForCausalLM(LlamaForCausalLM):
         return flh_model
 
 class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
-    def __init__(self, config, weight_bits=4, weight_group_size=128, act_bits=16, act_group_size=-1):
+    def __init__(self, config, weight_bits=4, weight_group_size=128, act_bits=16, act_group_size=-1, weight_sym=False, clip_ratio=1.0):
         LlamaForCausalLM.__init__(self, config)
         assert config._attn_implementation == "flash_attention_2"
         
@@ -482,6 +631,8 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
         self.weight_group_size = weight_group_size
         self.act_bits = act_bits
         self.act_group_size = act_group_size
+        self.weight_sym = weight_sym
+        self.clip_ratio = clip_ratio
         
         self.model.norm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         
@@ -494,14 +645,24 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                 config=config, 
                 layer_idx=layer_idx,
                 act_bits=act_bits,
-                act_group_size=act_group_size
+                act_group_size=act_group_size,
+                act_sym=True,
+                weight_bits=weight_bits,
+                weight_group_size=weight_group_size,
+                weight_sym=weight_sym,
+                clip_ratio=clip_ratio
             )
             layer.input_layernorm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
             layer.post_attention_layernorm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
             layer.mlp = FLH_LlamaMLP(
                 config=config,
                 act_bits=act_bits,
-                act_group_size=act_group_size
+                act_group_size=act_group_size,
+                act_sym=True,
+                weight_bits=weight_bits,
+                weight_group_size=weight_group_size,
+                weight_sym=weight_sym,
+                clip_ratio=clip_ratio
             )
     
     def forward(self, input_ids, attention_mask=None, position_ids=None, past_key_values=None, inputs_embeds=None, labels=None, use_cache=None, output_attentions=None, output_hidden_states=None, return_dict=None, cache_position=None):
@@ -632,7 +793,11 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                 layer_idx=layer_idx,
                 act_bits=act_bits,
                 act_group_size=act_group_size,
-                act_sym=act_sym
+                act_sym=act_sym,
+                weight_bits=weight_bits,
+                weight_group_size=weight_group_size,
+                weight_sym=weight_sym,
+                clip_ratio=clip_ratio
             )
 
             cal = calibration_data.get(layer_idx, {}) if calibration_data else {}
@@ -802,7 +967,11 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                 config=config,
                 act_bits=act_bits,
                 act_group_size=act_group_size,
-                act_sym=act_sym
+                act_sym=act_sym,
+                weight_bits=weight_bits,
+                weight_group_size=weight_group_size,
+                weight_sym=weight_sym,
+                clip_ratio=clip_ratio
             )
             gate_up_inps = cal.get("mlp.gate_proj", []) or cal.get("mlp.up_proj", [])
 
@@ -958,6 +1127,7 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
             "act_group_size": self.act_group_size,
             "weight_sym": self.weight_sym,
             "act_sym": self.act_sym,
+            "clip_ratio": getattr(self, 'clip_ratio', 1.0),
             "dtype": "float16",
         }
         import json
@@ -1032,6 +1202,7 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
         flh_model.act_group_size = quant_config["act_group_size"]
         flh_model.weight_sym = weight_sym
         flh_model.act_sym = act_sym
+        flh_model.clip_ratio = quant_config.get("clip_ratio", 1.0)
         
         torch.set_default_dtype(dtype_old)
         
@@ -1046,7 +1217,11 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                 layer_idx=layer_idx,
                 act_bits=quant_config["act_bits"],
                 act_group_size=quant_config["act_group_size"],
-                act_sym=act_sym
+                act_sym=act_sym,
+                weight_bits=quant_config["weight_bits"],
+                weight_group_size=quant_config["weight_group_size"],
+                weight_sym=weight_sym,
+                clip_ratio=flh_model.clip_ratio
             )
             layer.input_layernorm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
             layer.post_attention_layernorm = flh.nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -1054,7 +1229,11 @@ class FLH_LlamaForCausalLM(FLH_FP16LlamaForCausalLM):
                 config=config,
                 act_bits=quant_config["act_bits"],
                 act_group_size=quant_config["act_group_size"],
-                act_sym=act_sym
+                act_sym=act_sym,
+                weight_bits=quant_config["weight_bits"],
+                weight_group_size=quant_config["weight_group_size"],
+                weight_sym=weight_sym,
+                clip_ratio=flh_model.clip_ratio
             )
         
         print("  Loading weights to model (on CPU)...")
