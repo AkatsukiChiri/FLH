@@ -1,2 +1,5 @@
 flh_model/
 third_party/
+.vscode/
+**/__pycache__/
+**/*.pyc
