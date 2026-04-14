@@ -25,6 +25,8 @@ import flh
 from flh.nn.linear import LinearFLH
 from flh.nn.quantization import ActQuantizer
 
+import quarot
+
 try:
     from fast_hadamard_transform import hadamard_transform
     FAST_HADAMARD_AVAILABLE = True
@@ -73,7 +75,7 @@ class W4A4Linear(nn.Module):
     
     def forward(self, x):
         x_q, x_scale = self.quantize_activation(x)
-        output = torch.matmul(x_q.float(), self.weight_q.t().float())
+        output = quarot.matmul(x_q.to(torch.uint8), self.weight_q.to(torch.uint8).contiguous())
         output_scale = x_scale * self.weight_scale.unsqueeze(0)
         output = output * output_scale
         
