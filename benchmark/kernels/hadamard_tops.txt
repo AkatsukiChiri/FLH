@@ -1,0 +1,183 @@
+================================================================================
+Hadamard Transform Throughput Benchmark Suite
+Comparing FP16 PyTorch vs fast-hadamard-transform vs FLH
+================================================================================
+CUDA Device: NVIDIA GeForce RTX 3090
+CUDA Version: 12.4
+PyTorch Version: 2.6.0+cu124
+
+Testing transform correctness...
+FP16 PyTorch: Output shape torch.Size([2, 128]), Range [-7.8672, 14.6875]
+fast-hadamard-transform: Output shape torch.Size([2, 128]), Range [-33.5312, 29.1250]
+FLH Hadamard: Output shape torch.Size([2, 128]), Range [-33.5312, 29.1406]
+FLH Fused: q_packed shape torch.Size([2, 64]), scales shape torch.Size([2])
+
+================================================================================
+Comparing FP16 PyTorch vs fast-hadamard-transform vs FLH Hadamard vs FLH Fused
+================================================================================
+
+1. Testing FP16 PyTorch Implementation
+----------------------------------------
+Starting FP16 PyTorch benchmark - Data type: torch.float16, Columns: 128
+Warmup runs: 10, Test runs: 30
+------------------------------------------------------------
+Testing batch size: 128
+  Average time: 26.4511 ± 0.4136 ms
+  Throughput: 6.19e+05 elements/sec
+
+Testing batch size: 256
+  Average time: 26.3998 ± 0.1502 ms
+  Throughput: 1.24e+06 elements/sec
+
+Testing batch size: 512
+  Average time: 26.8233 ± 0.7416 ms
+  Throughput: 2.44e+06 elements/sec
+
+Testing batch size: 1024
+  Average time: 26.4595 ± 0.2633 ms
+  Throughput: 4.95e+06 elements/sec
+
+Testing batch size: 2048
+  Average time: 26.5426 ± 0.3817 ms
+  Throughput: 9.88e+06 elements/sec
+
+Testing batch size: 4096
+  Average time: 26.9471 ± 1.1155 ms
+  Throughput: 1.95e+07 elements/sec
+
+Testing batch size: 8192
+  Average time: 26.6407 ± 0.1652 ms
+  Throughput: 3.94e+07 elements/sec
+
+Testing batch size: 16384
+  Average time: 26.6747 ± 0.1349 ms
+  Throughput: 7.86e+07 elements/sec
+
+
+2. Testing fast-hadamard-transform Implementation
+----------------------------------------
+Starting fast-hadamard-transform benchmark - Data type: torch.float16, Columns: 128
+Warmup runs: 10, Test runs: 30
+------------------------------------------------------------
+Testing batch size: 128
+  Average time: 0.0401 ± 0.0053 ms
+  Throughput: 4.08e+08 elements/sec
+
+Testing batch size: 256
+  Average time: 0.0362 ± 0.0013 ms
+  Throughput: 9.05e+08 elements/sec
+
+Testing batch size: 512
+  Average time: 0.0373 ± 0.0038 ms
+  Throughput: 1.76e+09 elements/sec
+
+Testing batch size: 1024
+  Average time: 0.0374 ± 0.0025 ms
+  Throughput: 3.51e+09 elements/sec
+
+Testing batch size: 2048
+  Average time: 0.0376 ± 0.0039 ms
+  Throughput: 6.98e+09 elements/sec
+
+Testing batch size: 4096
+  Average time: 0.0348 ± 0.0015 ms
+  Throughput: 1.51e+10 elements/sec
+
+Testing batch size: 8192
+  Average time: 0.0351 ± 0.0016 ms
+  Throughput: 2.99e+10 elements/sec
+
+Testing batch size: 16384
+  Average time: 0.0355 ± 0.0006 ms
+  Throughput: 5.90e+10 elements/sec
+
+
+3. Testing FLH Hadamard (CUDA) Implementation
+----------------------------------------
+Starting FLH Hadamard benchmark - Data type: torch.float16, Columns: 128
+Warmup runs: 10, Test runs: 30
+------------------------------------------------------------
+Testing batch size: 128
+  Average time: 0.0186 ± 0.0007 ms
+  Throughput: 8.82e+08 elements/sec
+
+Testing batch size: 256
+  Average time: 0.0186 ± 0.0006 ms
+  Throughput: 1.76e+09 elements/sec
+
+Testing batch size: 512
+  Average time: 0.0187 ± 0.0006 ms
+  Throughput: 3.51e+09 elements/sec
+
+Testing batch size: 1024
+  Average time: 0.0185 ± 0.0005 ms
+  Throughput: 7.09e+09 elements/sec
+
+Testing batch size: 2048
+  Average time: 0.0187 ± 0.0006 ms
+  Throughput: 1.40e+10 elements/sec
+
+Testing batch size: 4096
+  Average time: 0.0179 ± 0.0005 ms
+  Throughput: 2.93e+10 elements/sec
+
+Testing batch size: 8192
+  Average time: 0.0181 ± 0.0007 ms
+  Throughput: 5.80e+10 elements/sec
+
+Testing batch size: 16384
+  Average time: 0.0192 ± 0.0006 ms
+  Throughput: 1.09e+11 elements/sec
+
+
+4. Testing FLH Fused (Hadamard+quant_i4) Implementation
+----------------------------------------
+Starting FLH fused (Hadamard+quant_i4) benchmark - Data type: torch.float16, Columns: 128
+Warmup runs: 10, Test runs: 30
+------------------------------------------------------------
+Testing batch size: 128
+  Average time: 0.0229 ± 0.0008 ms
+  Throughput: 7.14e+08 elements/sec
+
+Testing batch size: 256
+  Average time: 0.0227 ± 0.0006 ms
+  Throughput: 1.44e+09 elements/sec
+
+Testing batch size: 512
+  Average time: 0.0233 ± 0.0014 ms
+  Throughput: 2.82e+09 elements/sec
+
+Testing batch size: 1024
+  Average time: 0.0229 ± 0.0005 ms
+  Throughput: 5.72e+09 elements/sec
+
+Testing batch size: 2048
+  Average time: 0.0234 ± 0.0013 ms
+  Throughput: 1.12e+10 elements/sec
+
+Testing batch size: 4096
+  Average time: 0.0228 ± 0.0006 ms
+  Throughput: 2.30e+10 elements/sec
+
+Testing batch size: 8192
+  Average time: 0.0229 ± 0.0006 ms
+  Throughput: 4.58e+10 elements/sec
+
+Testing batch size: 16384
+  Average time: 0.0235 ± 0.0006 ms
+  Throughput: 8.91e+10 elements/sec
+
+Plot saved as 'hadamard_throughput_comparison.png'
+================================================================================
+Benchmark Summary:
+================================================================================
+FP16_PyTorch             : Max Throughput: 7.86e+07 elements/sec (at batch_size=16384), Min time: 26.3998 ms
+fast-hadamard-transform  : Max Throughput: 5.90e+10 elements/sec (at batch_size=16384), Min time: 0.0348 ms
+FLH_Hadamard             : Max Throughput: 1.09e+11 elements/sec (at batch_size=16384), Min time: 0.0179 ms
+FLH_Fused                : Max Throughput: 8.91e+10 elements/sec (at batch_size=16384), Min time: 0.0227 ms
+
+Throughput Speedup vs FP16_PyTorch:
+  fast-hadamard-transform  : Avg speedup: 725.94x, Max speedup: 774.77x
+  FLH_Hadamard             : Avg speedup: 1438.02x, Max speedup: 1503.65x
+  FLH_Fused                : Avg speedup: 1154.30x, Max speedup: 1184.11x
+================================================================================
