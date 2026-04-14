@@ -1,0 +1,733 @@
+
+====================================================================================================
+LinearFLH Performance Benchmark
+Comparing: FP16 | W4A4 | W4A16 | Had+W4A4(PT) | Had+W4A4(Fast) | LinearFLH
+====================================================================================================
+
+GPU: NVIDIA GeForce RTX 4090
+PyTorch: 2.4.0+cu124
+CUDA: 12.4
+
+================================================================================
+Config: Batch=128, In=4096, Out=4096, Group=128
+================================================================================
+
+[1/6] Creating W4A4 Linear...
+  ✓ W4A4 Linear created
+
+[2/6] Creating W4A16 Linear...
+  ✓ W4A16 Linear created
+
+[3/6] Creating Hadamard+W4A4 (PyTorch) Linear...
+  ✓ Hadamard+W4A4 (PyTorch) Linear created
+
+[4/6] Creating Hadamard+W4A4 (Fast) Linear...
+  ✓ Hadamard+W4A4 (Fast) Linear created
+
+[5/6] Creating LinearFLH...
+  ✓ LinearFLH created
+
+[6/6] Performance Testing...
+
+Benchmarking...
+  FP16:          0.0355 ms
+  W4A4:          0.3257 ms
+  W4A16:         0.2643 ms
+  Had+W4A4 (PT): 0.4665 ms
+  Had+W4A4 (F):  0.4447 ms
+  LinearFLH:     0.0304 ms
+
+================================================================================
+PERFORMANCE COMPARISON
+================================================================================
+Method               Time (ms)    Throughput      Speedup     
+--------------------------------------------------------------------------------
+FP16                 0.0355       120.84          1.00x       
+W4A4                 0.3257       13.19           0.11        x
+W4A16                0.2643       16.25           0.13        x
+Had+W4A4 (PT)        0.4665       9.21            0.08        x
+Had+W4A4 (Fast)      0.4447       9.66            0.08        x
+LinearFLH            0.0304       141.37          1.17        x
+================================================================================
+
+ACCURACY ANALYSIS:
+  W4A4              : Max Abs Err = 0.470703, Mean Abs Err = 0.079529, Cos Sim = 0.985840
+  W4A16             : Max Abs Err = 0.192871, Mean Abs Err = 0.032867, Cos Sim = 0.997559
+  Had+W4A4 (PT)     : Max Abs Err = 3.023438, Mean Abs Err = 0.493408, Cos Sim = -0.000792
+  Had+W4A4 (Fast)   : Max Abs Err = 4.093750, Mean Abs Err = 0.660645, Cos Sim = -0.003136
+  LinearFLH         : Max Abs Err = 4.113281, Mean Abs Err = 0.657227, Cos Sim = -0.003042
+
+MEMORY FOOTPRINT (Weight only):
+  FP16:          32.00 MB
+  W4A4:          16.01 MB (50.02%) [int8 storage]
+  W4A16:         8.01 MB (25.02%) [packed 4-bit]
+  Had+W4A4 (PT): 8.25 MB (25.78%) [packed 4-bit]
+  Had+W4A4 (F):  8.25 MB (25.78%) [packed 4-bit]
+  LinearFLH:     8.25 MB (25.78%) [packed 4-bit]
+
+================================================================================
+Config: Batch=128, In=4096, Out=14336, Group=128
+================================================================================
+
+[1/6] Creating W4A4 Linear...
+  ✓ W4A4 Linear created
+
+[2/6] Creating W4A16 Linear...
+  ✓ W4A16 Linear created
+
+[3/6] Creating Hadamard+W4A4 (PyTorch) Linear...
+  ✓ Hadamard+W4A4 (PyTorch) Linear created
+
+[4/6] Creating Hadamard+W4A4 (Fast) Linear...
+  ✓ Hadamard+W4A4 (Fast) Linear created
+
+[5/6] Creating LinearFLH...
+  ✓ LinearFLH created
+
+[6/6] Performance Testing...
+
+Benchmarking...
+  FP16:          0.1479 ms
+  W4A4:          0.7143 ms
+  W4A16:         1.4320 ms
+  Had+W4A4 (PT): 1.5417 ms
+  Had+W4A4 (F):  1.5430 ms
+  LinearFLH:     0.0331 ms
+
+================================================================================
+PERFORMANCE COMPARISON
+================================================================================
+Method               Time (ms)    Throughput      Speedup     
+--------------------------------------------------------------------------------
+FP16                 0.1479       101.63          1.00x       
+W4A4                 0.7143       21.05           0.21        x
+W4A16                1.4320       10.50           0.10        x
+Had+W4A4 (PT)        1.5417       9.75            0.10        x
+Had+W4A4 (Fast)      1.5430       9.74            0.10        x
+LinearFLH            0.0331       453.62          4.46        x
+================================================================================
+
+ACCURACY ANALYSIS:
+  W4A4              : Max Abs Err = 0.492188, Mean Abs Err = 0.078430, Cos Sim = 0.984863
+  W4A16             : Max Abs Err = 0.204590, Mean Abs Err = 0.032806, Cos Sim = 0.995117
+  Had+W4A4 (PT)     : Max Abs Err = 3.097656, Mean Abs Err = 0.491455, Cos Sim = 0.003277
+  Had+W4A4 (Fast)   : Max Abs Err = 4.031250, Mean Abs Err = 0.658691, Cos Sim = -0.000627
+  LinearFLH         : Max Abs Err = 4.031250, Mean Abs Err = 0.655762, Cos Sim = -0.001165
+
+MEMORY FOOTPRINT (Weight only):
+  FP16:          112.00 MB
+  W4A4:          56.03 MB (50.02%) [int8 storage]
+  W4A16:         28.03 MB (25.02%) [packed 4-bit]
+  Had+W4A4 (PT): 28.88 MB (25.78%) [packed 4-bit]
+  Had+W4A4 (F):  28.88 MB (25.78%) [packed 4-bit]
+  LinearFLH:     28.88 MB (25.78%) [packed 4-bit]
+
+================================================================================
+Config: Batch=128, In=14336, Out=4096, Group=128
+================================================================================
+
+[1/6] Creating W4A4 Linear...
+  ✓ W4A4 Linear created
+
+[2/6] Creating W4A16 Linear...
+  ✓ W4A16 Linear created
+
+[3/6] Creating Hadamard+W4A4 (PyTorch) Linear...
+  ✓ Hadamard+W4A4 (PyTorch) Linear created
+
+[4/6] Creating Hadamard+W4A4 (Fast) Linear...
+  ✓ Hadamard+W4A4 (Fast) Linear created
+
+[5/6] Creating LinearFLH...
+  ✓ LinearFLH created
+
+[6/6] Performance Testing...
+
+Benchmarking...
+  FP16:          0.1505 ms
+  W4A4:          0.7038 ms
+  W4A16:         1.4236 ms
+  Had+W4A4 (PT): 1.5279 ms
+  Had+W4A4 (F):  1.5290 ms
+  LinearFLH:     0.1146 ms
+
+================================================================================
+PERFORMANCE COMPARISON
+================================================================================
+Method               Time (ms)    Throughput      Speedup     
+--------------------------------------------------------------------------------
+FP16                 0.1505       99.90           1.00x       
+W4A4                 0.7038       21.36           0.21        x
+W4A16                1.4236       10.56           0.11        x
+Had+W4A4 (PT)        1.5279       9.84            0.10        x
+Had+W4A4 (Fast)      1.5290       9.83            0.10        x
+LinearFLH            0.1146       131.20          1.31        x
+================================================================================
+
+ACCURACY ANALYSIS:
+  W4A4              : Max Abs Err = 0.565430, Mean Abs Err = 0.085449, Cos Sim = 0.983398
+  W4A16             : Max Abs Err = 0.223633, Mean Abs Err = 0.032898, Cos Sim = 0.997559
+  Had+W4A4 (PT)     : Max Abs Err = 3.003906, Mean Abs Err = 0.494141, Cos Sim = 0.001915
+  Had+W4A4 (Fast)   : Max Abs Err = 4.281250, Mean Abs Err = 0.661133, Cos Sim = 0.001917
+  LinearFLH         : Max Abs Err = 3.884766, Mean Abs Err = 0.655762, Cos Sim = 0.001894
+
+MEMORY FOOTPRINT (Weight only):
+  FP16:          112.00 MB
+  W4A4:          56.01 MB (50.01%) [int8 storage]
+  W4A16:         28.01 MB (25.01%) [packed 4-bit]
+  Had+W4A4 (PT): 28.88 MB (25.78%) [packed 4-bit]
+  Had+W4A4 (F):  28.88 MB (25.78%) [packed 4-bit]
+  LinearFLH:     28.88 MB (25.78%) [packed 4-bit]
+
+================================================================================
+Config: Batch=256, In=4096, Out=4096, Group=128
+================================================================================
+
+[1/6] Creating W4A4 Linear...
+  ✓ W4A4 Linear created
+
+[2/6] Creating W4A16 Linear...
+  ✓ W4A16 Linear created
+
+[3/6] Creating Hadamard+W4A4 (PyTorch) Linear...
+  ✓ Hadamard+W4A4 (PyTorch) Linear created
+
+[4/6] Creating Hadamard+W4A4 (Fast) Linear...
+  ✓ Hadamard+W4A4 (Fast) Linear created
+
+[5/6] Creating LinearFLH...
+  ✓ LinearFLH created
+
+[6/6] Performance Testing...
+
+Benchmarking...
+  FP16:          0.0527 ms
+  W4A4:          0.3559 ms
+  W4A16:         0.2684 ms
+  Had+W4A4 (PT): 0.4857 ms
+  Had+W4A4 (F):  0.4853 ms
+  LinearFLH:     0.0317 ms
+
+================================================================================
+PERFORMANCE COMPARISON
+================================================================================
+Method               Time (ms)    Throughput      Speedup     
+--------------------------------------------------------------------------------
+FP16                 0.0527       163.01          1.00x       
+W4A4                 0.3559       24.14           0.15        x
+W4A16                0.2684       32.00           0.20        x
+Had+W4A4 (PT)        0.4857       17.69           0.11        x
+Had+W4A4 (Fast)      0.4853       17.70           0.11        x
+LinearFLH            0.0317       270.63          1.66        x
+================================================================================
+
+ACCURACY ANALYSIS:
+  W4A4              : Max Abs Err = 0.504883, Mean Abs Err = 0.080627, Cos Sim = 0.985352
+  W4A16             : Max Abs Err = 0.195801, Mean Abs Err = 0.032928, Cos Sim = 0.997070
+  Had+W4A4 (PT)     : Max Abs Err = 3.042969, Mean Abs Err = 0.493408, Cos Sim = 0.002167
+  Had+W4A4 (Fast)   : Max Abs Err = 4.273438, Mean Abs Err = 0.661133, Cos Sim = -0.000778
+  LinearFLH         : Max Abs Err = 4.148438, Mean Abs Err = 0.657227, Cos Sim = -0.000584
+
+MEMORY FOOTPRINT (Weight only):
+  FP16:          32.00 MB
+  W4A4:          16.01 MB (50.02%) [int8 storage]
+  W4A16:         8.01 MB (25.02%) [packed 4-bit]
+  Had+W4A4 (PT): 8.25 MB (25.78%) [packed 4-bit]
+  Had+W4A4 (F):  8.25 MB (25.78%) [packed 4-bit]
+  LinearFLH:     8.25 MB (25.78%) [packed 4-bit]
+
+================================================================================
+Config: Batch=256, In=4096, Out=14336, Group=128
+================================================================================
+
+[1/6] Creating W4A4 Linear...
+  ✓ W4A4 Linear created
+
+[2/6] Creating W4A16 Linear...
+  ✓ W4A16 Linear created
+
+[3/6] Creating Hadamard+W4A4 (PyTorch) Linear...
+  ✓ Hadamard+W4A4 (PyTorch) Linear created
+
+[4/6] Creating Hadamard+W4A4 (Fast) Linear...
+  ✓ Hadamard+W4A4 (Fast) Linear created
+
+[5/6] Creating LinearFLH...
+  ✓ LinearFLH created
+
+[6/6] Performance Testing...
+
+Benchmarking...
+  FP16:          0.2011 ms
+  W4A4:          1.1170 ms
+  W4A16:         1.4796 ms
+  Had+W4A4 (PT): 1.9089 ms
+  Had+W4A4 (F):  1.9116 ms
+  LinearFLH:     0.0627 ms
+
+================================================================================
+PERFORMANCE COMPARISON
+================================================================================
+Method               Time (ms)    Throughput      Speedup     
+--------------------------------------------------------------------------------
+FP16                 0.2011       149.48          1.00x       
+W4A4                 1.1170       26.92           0.18        x
+W4A16                1.4796       20.32           0.14        x
+Had+W4A4 (PT)        1.9089       15.75           0.11        x
+Had+W4A4 (Fast)      1.9116       15.73           0.11        x
+LinearFLH            0.0627       479.41          3.21        x
+================================================================================
+
+ACCURACY ANALYSIS:
+  W4A4              : Max Abs Err = 0.524414, Mean Abs Err = 0.079773, Cos Sim = 0.980957
+  W4A16             : Max Abs Err = 0.212158, Mean Abs Err = 0.032867, Cos Sim = 0.992188
+  Had+W4A4 (PT)     : Max Abs Err = 3.177734, Mean Abs Err = 0.492432, Cos Sim = 0.001993
+  Had+W4A4 (Fast)   : Max Abs Err = 4.539062, Mean Abs Err = 0.659180, Cos Sim = -0.000144
+  LinearFLH         : Max Abs Err = 4.320312, Mean Abs Err = 0.655273, Cos Sim = 0.000117
+
+MEMORY FOOTPRINT (Weight only):
+  FP16:          112.00 MB
+  W4A4:          56.03 MB (50.02%) [int8 storage]
+  W4A16:         28.03 MB (25.02%) [packed 4-bit]
+  Had+W4A4 (PT): 28.88 MB (25.78%) [packed 4-bit]
+  Had+W4A4 (F):  28.88 MB (25.78%) [packed 4-bit]
+  LinearFLH:     28.88 MB (25.78%) [packed 4-bit]
+
+================================================================================
+Config: Batch=256, In=14336, Out=4096, Group=128
+================================================================================
+
+[1/6] Creating W4A4 Linear...
+  ✓ W4A4 Linear created
+
+[2/6] Creating W4A16 Linear...
+  ✓ W4A16 Linear created
+
+[3/6] Creating Hadamard+W4A4 (PyTorch) Linear...
+  ✓ Hadamard+W4A4 (PyTorch) Linear created
+
+[4/6] Creating Hadamard+W4A4 (Fast) Linear...
+  ✓ Hadamard+W4A4 (Fast) Linear created
+
+[5/6] Creating LinearFLH...
+  ✓ LinearFLH created
+
+[6/6] Performance Testing...
+
+Benchmarking...
+  FP16:          0.2058 ms
+  W4A4:          1.0210 ms
+  W4A16:         1.4636 ms
+  Had+W4A4 (PT): 1.8298 ms
+  Had+W4A4 (F):  1.8309 ms
+  LinearFLH:     0.1178 ms
+
+================================================================================
+PERFORMANCE COMPARISON
+================================================================================
+Method               Time (ms)    Throughput      Speedup     
+--------------------------------------------------------------------------------
+FP16                 0.2058       146.09          1.00x       
+W4A4                 1.0210       29.45           0.20        x
+W4A16                1.4636       20.54           0.14        x
+Had+W4A4 (PT)        1.8298       16.43           0.11        x
+Had+W4A4 (Fast)      1.8309       16.42           0.11        x
+LinearFLH            0.1178       255.31          1.75        x
+================================================================================
+
+ACCURACY ANALYSIS:
+  W4A4              : Max Abs Err = 0.579590, Mean Abs Err = 0.084717, Cos Sim = 0.982910
+  W4A16             : Max Abs Err = 0.194824, Mean Abs Err = 0.032898, Cos Sim = 0.996094
+  Had+W4A4 (PT)     : Max Abs Err = 2.820312, Mean Abs Err = 0.493408, Cos Sim = 0.000938
+  Had+W4A4 (Fast)   : Max Abs Err = 4.328125, Mean Abs Err = 0.661133, Cos Sim = -0.001858
+  LinearFLH         : Max Abs Err = 4.171875, Mean Abs Err = 0.656738, Cos Sim = -0.002102
+
+MEMORY FOOTPRINT (Weight only):
+  FP16:          112.00 MB
+  W4A4:          56.01 MB (50.01%) [int8 storage]
+  W4A16:         28.01 MB (25.01%) [packed 4-bit]
+  Had+W4A4 (PT): 28.88 MB (25.78%) [packed 4-bit]
+  Had+W4A4 (F):  28.88 MB (25.78%) [packed 4-bit]
+  LinearFLH:     28.88 MB (25.78%) [packed 4-bit]
+
+================================================================================
+Config: Batch=512, In=4096, Out=4096, Group=128
+================================================================================
+
+[1/6] Creating W4A4 Linear...
+  ✓ W4A4 Linear created
+
+[2/6] Creating W4A16 Linear...
+  ✓ W4A16 Linear created
+
+[3/6] Creating Hadamard+W4A4 (PyTorch) Linear...
+  ✓ Hadamard+W4A4 (PyTorch) Linear created
+
+[4/6] Creating Hadamard+W4A4 (Fast) Linear...
+  ✓ Hadamard+W4A4 (Fast) Linear created
+
+[5/6] Creating LinearFLH...
+  ✓ LinearFLH created
+
+[6/6] Performance Testing...
+
+Benchmarking...
+  FP16:          0.1106 ms
+  W4A4:          0.5474 ms
+  W4A16:         0.3442 ms
+  Had+W4A4 (PT): 0.6593 ms
+  Had+W4A4 (F):  0.6584 ms
+  LinearFLH:     0.0352 ms
+
+================================================================================
+PERFORMANCE COMPARISON
+================================================================================
+Method               Time (ms)    Throughput      Speedup     
+--------------------------------------------------------------------------------
+FP16                 0.1106       155.39          1.00x       
+W4A4                 0.5474       31.38           0.20        x
+W4A16                0.3442       49.91           0.32        x
+Had+W4A4 (PT)        0.6593       26.06           0.17        x
+Had+W4A4 (Fast)      0.6584       26.09           0.17        x
+LinearFLH            0.0352       488.46          3.14        x
+================================================================================
+
+ACCURACY ANALYSIS:
+  W4A4              : Max Abs Err = 0.529297, Mean Abs Err = 0.079773, Cos Sim = 0.983398
+  W4A16             : Max Abs Err = 0.233887, Mean Abs Err = 0.032898, Cos Sim = 0.995117
+  Had+W4A4 (PT)     : Max Abs Err = 3.218750, Mean Abs Err = 0.493164, Cos Sim = 0.002655
+  Had+W4A4 (Fast)   : Max Abs Err = 4.332031, Mean Abs Err = 0.659668, Cos Sim = -0.001054
+  LinearFLH         : Max Abs Err = 4.351562, Mean Abs Err = 0.656250, Cos Sim = -0.001067
+
+MEMORY FOOTPRINT (Weight only):
+  FP16:          32.00 MB
+  W4A4:          16.01 MB (50.02%) [int8 storage]
+  W4A16:         8.01 MB (25.02%) [packed 4-bit]
+  Had+W4A4 (PT): 8.25 MB (25.78%) [packed 4-bit]
+  Had+W4A4 (F):  8.25 MB (25.78%) [packed 4-bit]
+  LinearFLH:     8.25 MB (25.78%) [packed 4-bit]
+
+================================================================================
+Config: Batch=512, In=4096, Out=14336, Group=128
+================================================================================
+
+[1/6] Creating W4A4 Linear...
+  ✓ W4A4 Linear created
+
+[2/6] Creating W4A16 Linear...
+  ✓ W4A16 Linear created
+
+[3/6] Creating Hadamard+W4A4 (PyTorch) Linear...
+  ✓ Hadamard+W4A4 (PyTorch) Linear created
+
+[4/6] Creating Hadamard+W4A4 (Fast) Linear...
+  ✓ Hadamard+W4A4 (Fast) Linear created
+
+[5/6] Creating LinearFLH...
+  ✓ LinearFLH created
+
+[6/6] Performance Testing...
+
+Benchmarking...
+  FP16:          0.3708 ms
+  W4A4:          1.9282 ms
+  W4A16:         1.6414 ms
+  Had+W4A4 (PT): 2.6847 ms
+  Had+W4A4 (F):  2.6930 ms
+  LinearFLH:     0.1223 ms
+
+================================================================================
+PERFORMANCE COMPARISON
+================================================================================
+Method               Time (ms)    Throughput      Speedup     
+--------------------------------------------------------------------------------
+FP16                 0.3708       162.14          1.00x       
+W4A4                 1.9282       31.18           0.19        x
+W4A16                1.6414       36.63           0.23        x
+Had+W4A4 (PT)        2.6847       22.40           0.14        x
+Had+W4A4 (Fast)      2.6930       22.33           0.14        x
+LinearFLH            0.1223       491.84          3.03        x
+================================================================================
+
+ACCURACY ANALYSIS:
+  W4A4              : Max Abs Err = 0.579590, Mean Abs Err = 0.079407, Cos Sim = 0.973145
+  W4A16             : Max Abs Err = 0.217529, Mean Abs Err = 0.032898, Cos Sim = 0.983887
+  Had+W4A4 (PT)     : Max Abs Err = 3.306641, Mean Abs Err = 0.493164, Cos Sim = 0.002281
+  Had+W4A4 (Fast)   : Max Abs Err = 4.390625, Mean Abs Err = 0.659668, Cos Sim = 0.001450
+  LinearFLH         : Max Abs Err = 4.347656, Mean Abs Err = 0.656250, Cos Sim = 0.001647
+
+MEMORY FOOTPRINT (Weight only):
+  FP16:          112.00 MB
+  W4A4:          56.03 MB (50.02%) [int8 storage]
+  W4A16:         28.03 MB (25.02%) [packed 4-bit]
+  Had+W4A4 (PT): 28.88 MB (25.78%) [packed 4-bit]
+  Had+W4A4 (F):  28.88 MB (25.78%) [packed 4-bit]
+  LinearFLH:     28.88 MB (25.78%) [packed 4-bit]
+
+================================================================================
+Config: Batch=512, In=14336, Out=4096, Group=128
+================================================================================
+
+[1/6] Creating W4A4 Linear...
+  ✓ W4A4 Linear created
+
+[2/6] Creating W4A16 Linear...
+  ✓ W4A16 Linear created
+
+[3/6] Creating Hadamard+W4A4 (PyTorch) Linear...
+  ✓ Hadamard+W4A4 (PyTorch) Linear created
+
+[4/6] Creating Hadamard+W4A4 (Fast) Linear...
+  ✓ Hadamard+W4A4 (Fast) Linear created
+
+[5/6] Creating LinearFLH...
+  ✓ LinearFLH created
+
+[6/6] Performance Testing...
+
+Benchmarking...
+  FP16:          0.3774 ms
+  W4A4:          1.6903 ms
+  W4A16:         1.6360 ms
+  Had+W4A4 (PT): 2.4500 ms
+  Had+W4A4 (F):  2.4577 ms
+  LinearFLH:     0.1237 ms
+
+================================================================================
+PERFORMANCE COMPARISON
+================================================================================
+Method               Time (ms)    Throughput      Speedup     
+--------------------------------------------------------------------------------
+FP16                 0.3774       159.32          1.00x       
+W4A4                 1.6903       35.57           0.22        x
+W4A16                1.6360       36.75           0.23        x
+Had+W4A4 (PT)        2.4500       24.54           0.15        x
+Had+W4A4 (Fast)      2.4577       24.47           0.15        x
+LinearFLH            0.1237       486.14          3.05        x
+================================================================================
+
+ACCURACY ANALYSIS:
+  W4A4              : Max Abs Err = 0.572266, Mean Abs Err = 0.085205, Cos Sim = 0.982422
+  W4A16             : Max Abs Err = 0.216675, Mean Abs Err = 0.032928, Cos Sim = 0.995605
+  Had+W4A4 (PT)     : Max Abs Err = 3.373047, Mean Abs Err = 0.493896, Cos Sim = 0.001452
+  Had+W4A4 (Fast)   : Max Abs Err = 4.527344, Mean Abs Err = 0.660156, Cos Sim = 0.000928
+  LinearFLH         : Max Abs Err = 4.222656, Mean Abs Err = 0.655762, Cos Sim = 0.001214
+
+MEMORY FOOTPRINT (Weight only):
+  FP16:          112.00 MB
+  W4A4:          56.01 MB (50.01%) [int8 storage]
+  W4A16:         28.01 MB (25.01%) [packed 4-bit]
+  Had+W4A4 (PT): 28.88 MB (25.78%) [packed 4-bit]
+  Had+W4A4 (F):  28.88 MB (25.78%) [packed 4-bit]
+  LinearFLH:     28.88 MB (25.78%) [packed 4-bit]
+
+================================================================================
+Config: Batch=1024, In=4096, Out=4096, Group=128
+================================================================================
+
+[1/6] Creating W4A4 Linear...
+  ✓ W4A4 Linear created
+
+[2/6] Creating W4A16 Linear...
+  ✓ W4A16 Linear created
+
+[3/6] Creating Hadamard+W4A4 (PyTorch) Linear...
+  ✓ Hadamard+W4A4 (PyTorch) Linear created
+
+[4/6] Creating Hadamard+W4A4 (Fast) Linear...
+  ✓ Hadamard+W4A4 (Fast) Linear created
+
+[5/6] Creating LinearFLH...
+  ✓ LinearFLH created
+
+[6/6] Performance Testing...
+
+Benchmarking...
+  FP16:          0.2097 ms
+  W4A4:          1.0307 ms
+  W4A16:         0.4458 ms
+  Had+W4A4 (PT): 1.1419 ms
+  Had+W4A4 (F):  1.1482 ms
+  LinearFLH:     0.0691 ms
+
+================================================================================
+PERFORMANCE COMPARISON
+================================================================================
+Method               Time (ms)    Throughput      Speedup     
+--------------------------------------------------------------------------------
+FP16                 0.2097       163.86          1.00x       
+W4A4                 1.0307       33.34           0.20        x
+W4A16                0.4458       77.08           0.47        x
+Had+W4A4 (PT)        1.1419       30.09           0.18        x
+Had+W4A4 (Fast)      1.1482       29.92           0.18        x
+LinearFLH            0.0691       497.25          3.03        x
+================================================================================
+
+ACCURACY ANALYSIS:
+  W4A4              : Max Abs Err = 0.548340, Mean Abs Err = 0.079956, Cos Sim = 0.980469
+  W4A16             : Max Abs Err = 0.209229, Mean Abs Err = 0.032898, Cos Sim = 0.992188
+  Had+W4A4 (PT)     : Max Abs Err = 3.218750, Mean Abs Err = 0.492676, Cos Sim = 0.002106
+  Had+W4A4 (Fast)   : Max Abs Err = 4.335938, Mean Abs Err = 0.659668, Cos Sim = -0.000934
+  LinearFLH         : Max Abs Err = 4.312500, Mean Abs Err = 0.656250, Cos Sim = -0.000987
+
+MEMORY FOOTPRINT (Weight only):
+  FP16:          32.00 MB
+  W4A4:          16.01 MB (50.02%) [int8 storage]
+  W4A16:         8.01 MB (25.02%) [packed 4-bit]
+  Had+W4A4 (PT): 8.25 MB (25.78%) [packed 4-bit]
+  Had+W4A4 (F):  8.25 MB (25.78%) [packed 4-bit]
+  LinearFLH:     8.25 MB (25.78%) [packed 4-bit]
+
+================================================================================
+Config: Batch=1024, In=4096, Out=14336, Group=128
+================================================================================
+
+[1/6] Creating W4A4 Linear...
+  ✓ W4A4 Linear created
+
+[2/6] Creating W4A16 Linear...
+  ✓ W4A16 Linear created
+
+[3/6] Creating Hadamard+W4A4 (PyTorch) Linear...
+  ✓ Hadamard+W4A4 (PyTorch) Linear created
+
+[4/6] Creating Hadamard+W4A4 (Fast) Linear...
+  ✓ Hadamard+W4A4 (Fast) Linear created
+
+[5/6] Creating LinearFLH...
+  ✓ LinearFLH created
+
+[6/6] Performance Testing...
+
+Benchmarking...
+  FP16:          0.7400 ms
+  W4A4:          3.5586 ms
+  W4A16:         1.9868 ms
+  Had+W4A4 (PT): 4.2441 ms
+  Had+W4A4 (F):  4.2678 ms
+  LinearFLH:     0.2222 ms
+
+================================================================================
+PERFORMANCE COMPARISON
+================================================================================
+Method               Time (ms)    Throughput      Speedup     
+--------------------------------------------------------------------------------
+FP16                 0.7400       162.52          1.00x       
+W4A4                 3.5586       33.79           0.21        x
+W4A16                1.9868       60.53           0.37        x
+Had+W4A4 (PT)        4.2441       28.34           0.17        x
+Had+W4A4 (Fast)      4.2678       28.18           0.17        x
+LinearFLH            0.2222       541.33          3.33        x
+================================================================================
+
+ACCURACY ANALYSIS:
+  W4A4              : Max Abs Err = 0.632812, Mean Abs Err = 0.079712, Cos Sim = 0.948730
+  W4A16             : Max Abs Err = 0.222168, Mean Abs Err = 0.032898, Cos Sim = 0.959473
+  Had+W4A4 (PT)     : Max Abs Err = 3.367188, Mean Abs Err = 0.492920, Cos Sim = 0.000916
+  Had+W4A4 (Fast)   : Max Abs Err = 4.679688, Mean Abs Err = 0.659668, Cos Sim = -0.000656
+  LinearFLH         : Max Abs Err = 4.773438, Mean Abs Err = 0.656250, Cos Sim = -0.000710
+
+MEMORY FOOTPRINT (Weight only):
+  FP16:          112.00 MB
+  W4A4:          56.03 MB (50.02%) [int8 storage]
+  W4A16:         28.03 MB (25.02%) [packed 4-bit]
+  Had+W4A4 (PT): 28.88 MB (25.78%) [packed 4-bit]
+  Had+W4A4 (F):  28.88 MB (25.78%) [packed 4-bit]
+  LinearFLH:     28.88 MB (25.78%) [packed 4-bit]
+
+================================================================================
+Config: Batch=1024, In=14336, Out=4096, Group=128
+================================================================================
+
+[1/6] Creating W4A4 Linear...
+  ✓ W4A4 Linear created
+
+[2/6] Creating W4A16 Linear...
+  ✓ W4A16 Linear created
+
+[3/6] Creating Hadamard+W4A4 (PyTorch) Linear...
+  ✓ Hadamard+W4A4 (PyTorch) Linear created
+
+[4/6] Creating Hadamard+W4A4 (Fast) Linear...
+  ✓ Hadamard+W4A4 (Fast) Linear created
+
+[5/6] Creating LinearFLH...
+  ✓ LinearFLH created
+
+[6/6] Performance Testing...
+
+Benchmarking...
+  FP16:          0.7537 ms
+  W4A4:          3.1416 ms
+  W4A16:         1.9686 ms
+  Had+W4A4 (PT): 3.7816 ms
+  Had+W4A4 (F):  3.7648 ms
+  LinearFLH:     0.2591 ms
+
+================================================================================
+PERFORMANCE COMPARISON
+================================================================================
+Method               Time (ms)    Throughput      Speedup     
+--------------------------------------------------------------------------------
+FP16                 0.7537       159.55          1.00x       
+W4A4                 3.1416       38.28           0.24        x
+W4A16                1.9686       61.09           0.38        x
+Had+W4A4 (PT)        3.7816       31.80           0.20        x
+Had+W4A4 (Fast)      3.7648       31.94           0.20        x
+LinearFLH            0.2591       464.08          2.91        x
+================================================================================
+
+ACCURACY ANALYSIS:
+  W4A4              : Max Abs Err = 0.677246, Mean Abs Err = 0.085022, Cos Sim = 0.978516
+  W4A16             : Max Abs Err = 0.207397, Mean Abs Err = 0.032928, Cos Sim = 0.991211
+  Had+W4A4 (PT)     : Max Abs Err = 3.265625, Mean Abs Err = 0.493896, Cos Sim = 0.001782
+  Had+W4A4 (Fast)   : Max Abs Err = 4.609375, Mean Abs Err = 0.660156, Cos Sim = 0.001295
+  LinearFLH         : Max Abs Err = 4.515625, Mean Abs Err = 0.655762, Cos Sim = 0.001169
+
+MEMORY FOOTPRINT (Weight only):
+  FP16:          112.00 MB
+  W4A4:          56.01 MB (50.01%) [int8 storage]
+  W4A16:         28.01 MB (25.01%) [packed 4-bit]
+  Had+W4A4 (PT): 28.88 MB (25.78%) [packed 4-bit]
+  Had+W4A4 (F):  28.88 MB (25.78%) [packed 4-bit]
+  LinearFLH:     28.88 MB (25.78%) [packed 4-bit]
+
+==================================================================================================================================
+SUMMARY RESULTS
+==================================================================================================================================
+
+Config               FP16(ms)    W4A4(ms)    W4A16(ms)   HadPT(ms)   HadF(ms)    FLH(ms)     W4A4x    W4A16x   HadPTx   HadFx    FLHx    
+----------------------------------------------------------------------------------------------------------------------------------
+B128_I4096_O4096     0.0355      0.3257      0.2643      0.4665      0.4447      0.0304      0.11     0.13     0.08     0.08     1.17    
+B128_I4096_O14336    0.1479      0.7143      1.4320      1.5417      1.5430      0.0331      0.21     0.10     0.10     0.10     4.46    
+B128_I14336_O4096    0.1505      0.7038      1.4236      1.5279      1.5290      0.1146      0.21     0.11     0.10     0.10     1.31    
+B256_I4096_O4096     0.0527      0.3559      0.2684      0.4857      0.4853      0.0317      0.15     0.20     0.11     0.11     1.66    
+B256_I4096_O14336    0.2011      1.1170      1.4796      1.9089      1.9116      0.0627      0.18     0.14     0.11     0.11     3.21    
+B256_I14336_O4096    0.2058      1.0210      1.4636      1.8298      1.8309      0.1178      0.20     0.14     0.11     0.11     1.75    
+B512_I4096_O4096     0.1106      0.5474      0.3442      0.6593      0.6584      0.0352      0.20     0.32     0.17     0.17     3.14    
+B512_I4096_O14336    0.3708      1.9282      1.6414      2.6847      2.6930      0.1223      0.19     0.23     0.14     0.14     3.03    
+B512_I14336_O4096    0.3774      1.6903      1.6360      2.4500      2.4577      0.1237      0.22     0.23     0.15     0.15     3.05    
+B1024_I4096_O4096    0.2097      1.0307      0.4458      1.1419      1.1482      0.0691      0.20     0.47     0.18     0.18     3.03    
+B1024_I4096_O14336   0.7400      3.5586      1.9868      4.2441      4.2678      0.2222      0.21     0.37     0.17     0.17     3.33    
+B1024_I14336_O4096   0.7537      3.1416      1.9686      3.7816      3.7648      0.2591      0.24     0.38     0.20     0.20     2.91    
+----------------------------------------------------------------------------------------------------------------------------------
+Average                                                                                      0.19     0.23     0.13     0.13     2.67    
+
+====================================================================================================
+KEY FINDINGS:
+====================================================================================================
+  - W4A4 average speedup:        0.19x over FP16
+  - W4A16 average speedup:       0.23x over FP16
+  - Had+W4A4(PT) average speedup:0.13x over FP16
+  - Had+W4A4(F) average speedup: 0.13x over FP16
+  - LinearFLH average speedup:    2.67x over FP16
+
+  LinearFLH vs W4A4:        13.77x
+  LinearFLH vs W4A16:       11.37x
+  LinearFLH vs Had+W4A4(PT): 19.86x
+  LinearFLH vs Had+W4A4(F): 19.84x
+
+====================================================================================================
+✓ Benchmark completed
+====================================================================================================
+
