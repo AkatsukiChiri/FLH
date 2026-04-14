@@ -1,0 +1,166 @@
+================================================================================
+FLH Hadamard Transform Speedup Benchmark
+Comparing: FP16 PyTorch | fast-hadamard-transform | FLH 128/64/32
+================================================================================
+CUDA Device : NVIDIA GeForce RTX 3090
+CUDA Version: 12.4
+PyTorch Version: 2.6.0+cu124
+Total GPU Memory: 25.4 GB
+
+================================================================================
+FLH Hadamard Transform Speedup Benchmark
+Comparing FP16 PyTorch vs fast-hadamard-transform vs FLH (128/64/32)
+================================================================================
+
+================================================================================
+Testing with cols=128
+================================================================================
+
+1. FP16 PyTorch (baseline)
+Starting FP16 PyTorch benchmark - Data type: torch.float16, Columns: 128
+Warmup runs: 10, Test runs: 30
+------------------------------------------------------------
+  batch_size=   128: 39.9881 ± 0.2115 ms, throughput=4.10e+05 elem/s
+  batch_size=   256: 40.7034 ± 1.0792 ms, throughput=8.05e+05 elem/s
+  batch_size=   512: 40.2890 ± 0.5779 ms, throughput=1.63e+06 elem/s
+  batch_size=  1024: 40.3126 ± 0.7236 ms, throughput=3.25e+06 elem/s
+  batch_size=  2048: 40.5011 ± 1.0263 ms, throughput=6.47e+06 elem/s
+  batch_size=  4096: 40.3492 ± 0.7056 ms, throughput=1.30e+07 elem/s
+  batch_size=  8192: 40.8074 ± 1.0677 ms, throughput=2.57e+07 elem/s
+  batch_size= 16384: 40.3217 ± 0.4066 ms, throughput=5.20e+07 elem/s
+
+2. fast-hadamard-transform
+Starting fast-hadamard-transform benchmark - Columns: 128
+Warmup runs: 10, Test runs: 30
+------------------------------------------------------------
+  batch_size=   128: 0.0489 ± 0.0042 ms, throughput=3.35e+08 elem/s
+  batch_size=   256: 0.0475 ± 0.0032 ms, throughput=6.89e+08 elem/s
+  batch_size=   512: 0.0463 ± 0.0039 ms, throughput=1.42e+09 elem/s
+  batch_size=  1024: 0.0447 ± 0.0014 ms, throughput=2.93e+09 elem/s
+  batch_size=  2048: 0.0465 ± 0.0018 ms, throughput=5.64e+09 elem/s
+  batch_size=  4096: 0.0459 ± 0.0018 ms, throughput=1.14e+10 elem/s
+  batch_size=  8192: 0.0461 ± 0.0020 ms, throughput=2.27e+10 elem/s
+  batch_size= 16384: 0.0461 ± 0.0022 ms, throughput=4.55e+10 elem/s
+
+3. FLH Hadamard 128
+Starting FLH Hadamard 128-group benchmark - Columns: 128
+Warmup runs: 10, Test runs: 30
+------------------------------------------------------------
+  batch_size=   128: 0.0244 ± 0.0016 ms, throughput=6.72e+08 elem/s
+  batch_size=   256: 0.0242 ± 0.0025 ms, throughput=1.36e+09 elem/s
+  batch_size=   512: 0.0251 ± 0.0059 ms, throughput=2.62e+09 elem/s
+  batch_size=  1024: 0.0246 ± 0.0026 ms, throughput=5.32e+09 elem/s
+  batch_size=  2048: 0.0251 ± 0.0025 ms, throughput=1.05e+10 elem/s
+  batch_size=  4096: 0.0266 ± 0.0041 ms, throughput=1.97e+10 elem/s
+  batch_size=  8192: 0.0260 ± 0.0045 ms, throughput=4.03e+10 elem/s
+  batch_size= 16384: 0.0254 ± 0.0012 ms, throughput=8.27e+10 elem/s
+
+================================================================================
+Testing with cols=64
+================================================================================
+
+1. FP16 PyTorch (baseline)
+Starting FP16 PyTorch benchmark - Data type: torch.float16, Columns: 64
+Warmup runs: 10, Test runs: 30
+------------------------------------------------------------
+  batch_size=   128: 17.3075 ± 0.2755 ms, throughput=4.73e+05 elem/s
+  batch_size=   256: 17.4154 ± 0.2944 ms, throughput=9.41e+05 elem/s
+  batch_size=   512: 18.0679 ± 2.0963 ms, throughput=1.81e+06 elem/s
+  batch_size=  1024: 17.2893 ± 0.0541 ms, throughput=3.79e+06 elem/s
+  batch_size=  2048: 17.3609 ± 0.2394 ms, throughput=7.55e+06 elem/s
+  batch_size=  4096: 17.4135 ± 0.4611 ms, throughput=1.51e+07 elem/s
+  batch_size=  8192: 17.3370 ± 0.3243 ms, throughput=3.02e+07 elem/s
+  batch_size= 16384: 17.4068 ± 0.2626 ms, throughput=6.02e+07 elem/s
+
+2. fast-hadamard-transform
+Starting fast-hadamard-transform benchmark - Columns: 64
+Warmup runs: 10, Test runs: 30
+------------------------------------------------------------
+  batch_size=   128: 0.0460 ± 0.0037 ms, throughput=1.78e+08 elem/s
+  batch_size=   256: 0.0459 ± 0.0031 ms, throughput=3.57e+08 elem/s
+  batch_size=   512: 0.0455 ± 0.0030 ms, throughput=7.21e+08 elem/s
+  batch_size=  1024: 0.0460 ± 0.0021 ms, throughput=1.42e+09 elem/s
+  batch_size=  2048: 0.0454 ± 0.0017 ms, throughput=2.88e+09 elem/s
+  batch_size=  4096: 0.0454 ± 0.0018 ms, throughput=5.77e+09 elem/s
+  batch_size=  8192: 0.0458 ± 0.0023 ms, throughput=1.14e+10 elem/s
+  batch_size= 16384: 0.0464 ± 0.0020 ms, throughput=2.26e+10 elem/s
+
+3. FLH Hadamard 64
+Starting FLH Hadamard 64-group benchmark - Columns: 64
+Warmup runs: 10, Test runs: 30
+------------------------------------------------------------
+  batch_size=   128: 0.0246 ± 0.0030 ms, throughput=3.33e+08 elem/s
+  batch_size=   256: 0.0246 ± 0.0030 ms, throughput=6.66e+08 elem/s
+  batch_size=   512: 0.0250 ± 0.0033 ms, throughput=1.31e+09 elem/s
+  batch_size=  1024: 0.0244 ± 0.0023 ms, throughput=2.69e+09 elem/s
+  batch_size=  2048: 0.0244 ± 0.0026 ms, throughput=5.38e+09 elem/s
+  batch_size=  4096: 0.0246 ± 0.0020 ms, throughput=1.07e+10 elem/s
+  batch_size=  8192: 0.0238 ± 0.0009 ms, throughput=2.21e+10 elem/s
+  batch_size= 16384: 0.0239 ± 0.0016 ms, throughput=4.39e+10 elem/s
+
+================================================================================
+Testing with cols=32
+================================================================================
+
+1. FP16 PyTorch (baseline)
+Starting FP16 PyTorch benchmark - Data type: torch.float16, Columns: 32
+Warmup runs: 10, Test runs: 30
+------------------------------------------------------------
+  batch_size=   128: 7.3535 ± 0.1612 ms, throughput=5.57e+05 elem/s
+  batch_size=   256: 6.5494 ± 1.3944 ms, throughput=1.25e+06 elem/s
+  batch_size=   512: 4.8885 ± 0.0894 ms, throughput=3.35e+06 elem/s
+  batch_size=  1024: 5.9093 ± 0.6515 ms, throughput=5.55e+06 elem/s
+  batch_size=  2048: 5.1860 ± 1.9012 ms, throughput=1.26e+07 elem/s
+  batch_size=  4096: 4.8420 ± 0.0283 ms, throughput=2.71e+07 elem/s
+  batch_size=  8192: 4.8710 ± 0.1159 ms, throughput=5.38e+07 elem/s
+  batch_size= 16384: 4.9088 ± 0.4818 ms, throughput=1.07e+08 elem/s
+
+2. fast-hadamard-transform
+Starting fast-hadamard-transform benchmark - Columns: 32
+Warmup runs: 10, Test runs: 30
+------------------------------------------------------------
+  batch_size=   128: 0.0366 ± 0.0035 ms, throughput=1.12e+08 elem/s
+  batch_size=   256: 0.0375 ± 0.0067 ms, throughput=2.18e+08 elem/s
+  batch_size=   512: 0.0368 ± 0.0027 ms, throughput=4.46e+08 elem/s
+  batch_size=  1024: 0.0360 ± 0.0012 ms, throughput=9.11e+08 elem/s
+  batch_size=  2048: 0.0361 ± 0.0028 ms, throughput=1.82e+09 elem/s
+  batch_size=  4096: 0.0358 ± 0.0023 ms, throughput=3.66e+09 elem/s
+  batch_size=  8192: 0.0360 ± 0.0021 ms, throughput=7.29e+09 elem/s
+  batch_size= 16384: 0.0360 ± 0.0023 ms, throughput=1.46e+10 elem/s
+
+3. FLH Hadamard 32
+Starting FLH Hadamard 32-group benchmark - Columns: 32
+Warmup runs: 10, Test runs: 30
+------------------------------------------------------------
+  batch_size=   128: 0.0193 ± 0.0022 ms, throughput=2.12e+08 elem/s
+  batch_size=   256: 0.0189 ± 0.0007 ms, throughput=4.33e+08 elem/s
+  batch_size=   512: 0.0188 ± 0.0009 ms, throughput=8.71e+08 elem/s
+  batch_size=  1024: 0.0191 ± 0.0008 ms, throughput=1.72e+09 elem/s
+  batch_size=  2048: 0.0199 ± 0.0031 ms, throughput=3.29e+09 elem/s
+  batch_size=  4096: 0.0189 ± 0.0007 ms, throughput=6.94e+09 elem/s
+  batch_size=  8192: 0.0191 ± 0.0009 ms, throughput=1.37e+10 elem/s
+  batch_size= 16384: 0.0194 ± 0.0019 ms, throughput=2.70e+10 elem/s
+
+================================================================================
+BENCHMARK SUMMARY - Max Speedup vs FP16 PyTorch
+================================================================================
+Columns    Implementation                  Max Speedup @ batch_size
+--------------------------------------------------------------------------------
+32         fast-hadamard-transform              201.06x          128
+32         FLH_32                               380.90x          128
+64         fast-hadamard-transform              397.36x          512
+64         FLH_64                               729.71x         8192
+128        fast-hadamard-transform              901.32x         1024
+128        FLH_128                             1684.08x          256
+================================================================================
+
+Generating speedup plot...
+Global max speedup: 1684.08x, setting ylim_max=1684.5
+
+Plot saved as 'flh_hadamard_speedup_comparison.png'
+
+Generating throughput plot...
+
+Plot saved as 'flh_hadamard_throughput_comparison.png'
+
+Benchmark completed!
