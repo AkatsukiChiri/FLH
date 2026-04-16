@@ -3,9 +3,14 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
+#include <cassert>
 #include "../kernels/had_and_quant.h"
+#include "../kernels/had_and_quant_gs.h"
+#include "../kernels/quant_and_pack_gs.h"
+#include "../kernels/gemm_and_dequant_i4_gs.h"
 
-extern "C" void flhDenseLayerGEMM_i4_o16(
+extern "C" {
+void flhDenseLayerGEMM_i4_o16(
   const uint8_t* A,
   const uint8_t* B,
   const half* A_scale,
@@ -14,6 +19,36 @@ extern "C" void flhDenseLayerGEMM_i4_o16(
   size_t M_GLOBAL,
   size_t N_GLOBAL,
   size_t K_GLOBAL
+);
+} // extern "C"
+
+// New group-size-flexible functions (C++ linkage, matching header declarations)
+void flhDenseLayerGEMM_i4_o16_gs(
+  int group_size,
+  const uint8_t* A,
+  const uint8_t* B,
+  half* D,
+  size_t M_GLOBAL,
+  size_t N_GLOBAL,
+  size_t K_GLOBAL,
+  const half* A_scale,
+  const half* B_scale
+);
+
+void had_and_quant_host_gs(
+  int group_size,
+  const half* data,
+  Int4Storage* quantized_data,
+  half* scales,
+  uint32_t M
+);
+
+void quant_and_pack_host_gs(
+  int group_size,
+  const half* data,
+  Int4Storage* quantized_data,
+  half* scales,
+  uint32_t M
 );
 
 // Hadamard transform kernels (implemented in separate .cu files)
@@ -162,6 +197,107 @@ static std::vector<torch::Tensor> quant_and_pack_i4(
   return {q, scales};
 }
 
+// ==================== Group Size Flexible Functions ====================
+
+static std::vector<torch::Tensor> hadamard_and_quantize_i4_gs(
+  const torch::Tensor& input,
+  int group_size
+) {
+  TORCH_CHECK(input.is_cuda(), "Input tensor must be on CUDA");
+  TORCH_CHECK(input.scalar_type() == torch::kFloat16, "Input tensor must be float16 (half)");
+  TORCH_CHECK(input.dim() == 2, "Input tensor must be 2D");
+  TORCH_CHECK(input.size(1) == group_size, "Last dimension must equal group_size");
+  TORCH_CHECK(input.is_contiguous(), "Input tensor must be contiguous");
+  TORCH_CHECK(group_size == 32 || group_size == 64 || group_size == 128, "group_size must be 32, 64, or 128");
+
+  const int64_t M = input.size(0);
+  auto q = torch::empty({M, group_size / 2}, torch::TensorOptions().device(input.device()).dtype(torch::kUInt8));
+  auto scales = torch::empty({M}, torch::TensorOptions().device(input.device()).dtype(torch::kFloat16));
+
+  had_and_quant_host_gs(
+    group_size,
+    (const half*)input.data_ptr<at::Half>(),
+    (Int4Storage*)q.data_ptr<uint8_t>(),
+    (half*)scales.data_ptr<at::Half>(),
+    (uint32_t)M
+  );
+
+  return {q, scales};
+}
+
+static std::vector<torch::Tensor> quant_and_pack_i4_gs(
+  const torch::Tensor& input,
+  int group_size
+) {
+  TORCH_CHECK(input.is_cuda(), "Input tensor must be on CUDA");
+  TORCH_CHECK(input.scalar_type() == torch::kFloat16, "Input tensor must be float16 (half)");
+  TORCH_CHECK(input.dim() == 2, "Input tensor must be 2D");
+  TORCH_CHECK(input.size(1) == group_size, "Last dimension must equal group_size");
+  TORCH_CHECK(input.is_contiguous(), "Input tensor must be contiguous");
+  TORCH_CHECK(group_size == 32 || group_size == 64 || group_size == 128, "group_size must be 32, 64, or 128");
+
+  const int64_t M = input.size(0);
+  auto q = torch::empty({M, group_size / 2}, torch::TensorOptions().device(input.device()).dtype(torch::kUInt8));
+  auto scales = torch::empty({M}, torch::TensorOptions().device(input.device()).dtype(torch::kFloat16));
+
+  quant_and_pack_host_gs(
+    group_size,
+    (const half*)input.data_ptr<at::Half>(),
+    (Int4Storage*)q.data_ptr<uint8_t>(),
+    (half*)scales.data_ptr<at::Half>(),
+    (uint32_t)M
+  );
+
+  return {q, scales};
+}
+
+static torch::Tensor gemm_i4_dequant_o16_gs(
+  const torch::Tensor& A,
+  const torch::Tensor& B,
+  const torch::Tensor& A_scale,
+  const torch::Tensor& B_scale,
+  int group_size
+){
+  TORCH_CHECK(A.is_cuda() && B.is_cuda() && A_scale.is_cuda() && B_scale.is_cuda(), "tensors must be CUDA");
+  TORCH_CHECK(A.scalar_type() == torch::kUInt8, "A must be uint8 packed int4");
+  TORCH_CHECK(B.scalar_type() == torch::kUInt8, "B must be uint8 packed int4");
+  TORCH_CHECK(A_scale.scalar_type() == torch::kFloat16, "A_scale must be float16");
+  TORCH_CHECK(B_scale.scalar_type() == torch::kFloat16, "B_scale must be float16");
+  TORCH_CHECK(A.is_contiguous() && B.is_contiguous() && A_scale.is_contiguous() && B_scale.is_contiguous(), "tensors must be contiguous");
+  TORCH_CHECK(A.dim() == 2 && B.dim() == 2, "A/B must be 2D");
+  TORCH_CHECK(group_size == 32 || group_size == 64 || group_size == 128, "group_size must be 32, 64, or 128");
+
+  const int64_t M = A.size(0);
+  const int64_t K_packed = A.size(1);
+  const int64_t K = K_packed * 2;
+  const int64_t N = B.size(0);
+  TORCH_CHECK(B.size(1) == K_packed, "B.shape[1] must equal A.shape[1]");
+  TORCH_CHECK(K % group_size == 0, "K must be divisible by group_size");
+
+  // Calculate groups per row
+  const int64_t num_groups = K / group_size;
+  TORCH_CHECK(A_scale.size(0) == M, "A_scale.shape[0] must equal M");
+  TORCH_CHECK(A_scale.size(1) == num_groups, "A_scale.shape[1] must equal K/group_size");
+  TORCH_CHECK(B_scale.size(0) == N, "B_scale.shape[0] must equal N");
+  TORCH_CHECK(B_scale.size(1) == num_groups, "B_scale.shape[1] must equal K/group_size");
+
+  auto D = torch::empty({M, N}, torch::TensorOptions().device(A.device()).dtype(torch::kFloat16));
+
+  flhDenseLayerGEMM_i4_o16_gs(
+    group_size,
+    (const uint8_t*)A.data_ptr<uint8_t>(),
+    (const uint8_t*)B.data_ptr<uint8_t>(),
+    (half*)D.data_ptr<at::Half>(),
+    (size_t)M,
+    (size_t)N,
+    (size_t)K,
+    (const half*)A_scale.data_ptr<at::Half>(),
+    (const half*)B_scale.data_ptr<at::Half>()
+  );
+
+  return D;
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("gemm_i4_dequant_o16", &gemm_i4_dequant_o16, "int4 GEMM with sync dequant (fp16 out)");
   m.def("hadamard_transform_128_half", &hadamard_transform_128_half, "In-place Hadamard transform for (M, 128) half matrix");
@@ -169,4 +305,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("hadamard_transform_32_half", &hadamard_transform_32_half, "In-place Hadamard transform for (M, 32) half matrix");
   m.def("hadamard_and_quantize_i4", &hadamard_and_quantize_i4, "Fused Hadamard transform + int4 quantization (returns packed uint8 and scales)");
   m.def("quant_and_pack_i4", &quant_and_pack_i4, "Symmetric int4 quantization + packing (no Hadamard, returns packed uint8 and scales)");
+
+  // New group size flexible functions
+  m.def("gemm_i4_dequant_o16_gs", &gemm_i4_dequant_o16_gs, "int4 GEMM with sync dequant and configurable group size (fp16 out)");
+  m.def("hadamard_and_quantize_i4_gs", &hadamard_and_quantize_i4_gs, "Fused Hadamard transform + int4 quantization with configurable group size (returns packed uint8 and scales)");
+  m.def("quant_and_pack_i4_gs", &quant_and_pack_i4_gs, "Symmetric int4 quantization + packing with configurable group size (returns packed uint8 and scales)");
 }

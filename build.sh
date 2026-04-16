@@ -72,6 +72,48 @@ print('所有测试通过!')
 "
 }
 
+# 测试 group size flexible 函数
+test_gs() {
+    echo_info "测试 group size flexible 函数..."
+    python -c "
+import torch
+from flh.cuda import (
+    hadamard_and_quantize_i4_gs,
+    quant_and_pack_i4_gs,
+    gemm_i4_dequant_o16_gs
+)
+
+# 测试 hadamard_and_quantize_i4_gs
+for gs in [32, 64, 128]:
+    x = torch.randn(64, gs, dtype=torch.float16, device='cuda')
+    q, s = hadamard_and_quantize_i4_gs(x, gs)
+    assert q.shape == (64, gs // 2), f'hadamard_and_quantize_i4_gs {gs} quant shape'
+    assert s.shape == (64,), f'hadamard_and_quantize_i4_gs {gs} scale shape'
+    print(f'hadamard_and_quantize_i4_gs (gs={gs}): OK')
+
+# 测试 quant_and_pack_i4_gs
+for gs in [32, 64, 128]:
+    x = torch.randn(64, gs, dtype=torch.float16, device='cuda')
+    q, s = quant_and_pack_i4_gs(x, gs)
+    assert q.shape == (64, gs // 2), f'quant_and_pack_i4_gs {gs} quant shape'
+    assert s.shape == (64,), f'quant_and_pack_i4_gs {gs} scale shape'
+    print(f'quant_and_pack_i4_gs (gs={gs}): OK')
+
+# 测试 gemm_i4_dequant_o16_gs
+for gs in [32, 64, 128]:
+    M, N, K = 128, 256, gs * 4  # 确保 K 可被 group_size 整除
+    A = torch.randint(0, 256, (M, K // 2), dtype=torch.uint8, device='cuda')
+    B = torch.randint(0, 256, (N, K // 2), dtype=torch.uint8, device='cuda')
+    A_scale = torch.randn(M, K // gs, dtype=torch.float16, device='cuda').abs() + 0.1
+    B_scale = torch.randn(N, K // gs, dtype=torch.float16, device='cuda').abs() + 0.1
+    D = gemm_i4_dequant_o16_gs(A, B, A_scale, B_scale, gs)
+    assert D.shape == (M, N), f'gemm_i4_dequant_o16_gs {gs} output shape'
+    print(f'gemm_i4_dequant_o16_gs (gs={gs}): OK')
+
+print('所有 group size 测试通过!')
+"
+}
+
 # 主程序
 case "${1:-}" in
     clean)
@@ -84,11 +126,15 @@ case "${1:-}" in
     test)
         test_build
         ;;
+    test_gs)
+        test_gs
+        ;;
     *)
-        echo "用法: $0 {clean|rebuild|test}"
+        echo "用法: $0 {clean|rebuild|test|test_gs}"
         echo "  clean   - 清理编译缓存"
         echo "  rebuild - 清理并重新编译"
-        echo "  test    - 测试编译结果"
+        echo "  test    - 测试基础编译结果"
+        echo "  test_gs - 测试 group size flexible 函数"
         exit 1
         ;;
 esac

@@ -26,6 +26,9 @@ def load_flh_cuda_ext():
     str(root / "flh" / "kernels" / "cuda_had_32_kernel.cu"),
     str(root / "flh" / "kernels" / "had_and_quant.cu"),
     str(root / "flh" / "kernels" / "quant_and_pack.cu"),
+    str(root / "flh" / "kernels" / "had_and_quant_gs.cu"),
+    str(root / "flh" / "kernels" / "quant_and_pack_gs.cu"),
+    str(root / "flh" / "kernels" / "gemm_and_dequant_i4_gs.cu"),
   ]
  
   extra_cuda_cflags = [
