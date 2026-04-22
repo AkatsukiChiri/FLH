@@ -17,10 +17,12 @@ flh/nn/__init__.py
 flh/nn/gptq.py
 flh/nn/hadamard.py
 flh/nn/linear.py
+flh/nn/linear_gs.py
 flh/nn/linear_origin.py
 flh/nn/linear_origin_v2.py
 flh/nn/normalization.py
 flh/nn/quantization.py
+flh/nn/quantization_gs.py
 flh/nn/quantization_v1.py
 flh/nn/quantization_v2.py
 test/test_activate.py

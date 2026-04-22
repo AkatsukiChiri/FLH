@@ -1,0 +1,1568 @@
+
+██████████████████████████████████████████████████████████████████████
+█                                                                    █
+█          FLH QUANTIZED MODEL VS FP16 BENCHMARK                      █
+█                                                                    █
+██████████████████████████████████████████████████████████████████████
+
+Configuration:
+  Model: /home/mashaobo/.cache/modelscope/hub/models/LLM-Research/llama-2-7b/
+  Batch sizes: [4, 8, 16]
+  Prefill lengths: [128, 256, 512]
+  Decode steps: [1, 32]
+  Total configurations: 18
+  Warmup iterations: 3
+  Benchmark iterations: 10
+
+======================================================================
+==========================LOADING FP16 MODEL==========================
+======================================================================
+✓ FP16 model loaded successfully
+  Model size: 12.55 GB
+
+[1/18] Testing config: bs4_pre128_dec1
+
+======================================================================
+Benchmarking: FP16
+  Batch size: 4
+  Prefill seq len: 128
+  Decode steps: 1
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (1 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                        DETAILED RESULTS: FP16                        
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              130.754 ± 0.225
+Prefill Memory (GB)            12.856
+Prefill Throughput (tok/s)     3915.76
+--------------------------------------------------
+Decode Time (ms)               109.645 ± 0.783
+Decode Time/token (ms)         10.965
+Decode Memory (GB)             13.093
+Decode Throughput (tok/s)      36.48
+--------------------------------------------------
+E2E Time (ms)                  153.752 ± 0.341
+E2E Throughput (tok/s)         3356.05
+======================================================================
+
+
+[2/18] Testing config: bs4_pre128_dec32
+
+======================================================================
+Benchmarking: FP16
+  Batch size: 4
+  Prefill seq len: 128
+  Decode steps: 32
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (32 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                        DETAILED RESULTS: FP16                        
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              131.485 ± 0.161
+Prefill Memory (GB)            12.856
+Prefill Throughput (tok/s)     3893.99
+--------------------------------------------------
+Decode Time (ms)               1361.737 ± 4.523
+Decode Time/token (ms)         136.174
+Decode Memory (GB)             13.184
+Decode Throughput (tok/s)      94.00
+--------------------------------------------------
+E2E Time (ms)                  1400.455 ± 3.539
+E2E Throughput (tok/s)         456.99
+======================================================================
+
+
+[3/18] Testing config: bs4_pre256_dec1
+
+======================================================================
+Benchmarking: FP16
+  Batch size: 4
+  Prefill seq len: 256
+  Decode steps: 1
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (1 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                        DETAILED RESULTS: FP16                        
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              242.615 ± 0.126
+Prefill Memory (GB)            13.154
+Prefill Throughput (tok/s)     4220.67
+--------------------------------------------------
+Decode Time (ms)               187.094 ± 0.054
+Decode Time/token (ms)         18.709
+Decode Memory (GB)             13.623
+Decode Throughput (tok/s)      21.38
+--------------------------------------------------
+E2E Time (ms)                  266.614 ± 0.500
+E2E Throughput (tok/s)         3855.76
+======================================================================
+
+
+[4/18] Testing config: bs4_pre256_dec32
+
+======================================================================
+Benchmarking: FP16
+  Batch size: 4
+  Prefill seq len: 256
+  Decode steps: 32
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (32 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                        DETAILED RESULTS: FP16                        
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              242.619 ± 0.124
+Prefill Memory (GB)            13.154
+Prefill Throughput (tok/s)     4220.61
+--------------------------------------------------
+Decode Time (ms)               1437.387 ± 5.941
+Decode Time/token (ms)         143.739
+Decode Memory (GB)             13.683
+Decode Throughput (tok/s)      89.05
+--------------------------------------------------
+E2E Time (ms)                  1519.754 ± 7.844
+E2E Throughput (tok/s)         758.02
+======================================================================
+
+
+[5/18] Testing config: bs4_pre512_dec1
+
+======================================================================
+Benchmarking: FP16
+  Batch size: 4
+  Prefill seq len: 512
+  Decode steps: 1
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (1 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                        DETAILED RESULTS: FP16                        
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              451.664 ± 0.144
+Prefill Memory (GB)            13.749
+Prefill Throughput (tok/s)     4534.34
+--------------------------------------------------
+Decode Time (ms)               330.698 ± 0.066
+Decode Time/token (ms)         33.070
+Decode Memory (GB)             14.685
+Decode Throughput (tok/s)      12.10
+--------------------------------------------------
+E2E Time (ms)                  478.467 ± 0.408
+E2E Throughput (tok/s)         4288.70
+======================================================================
+
+
+[6/18] Testing config: bs4_pre512_dec32
+
+======================================================================
+Benchmarking: FP16
+  Batch size: 4
+  Prefill seq len: 512
+  Decode steps: 32
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (32 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                        DETAILED RESULTS: FP16                        
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              451.605 ± 0.104
+Prefill Memory (GB)            13.749
+Prefill Throughput (tok/s)     4534.94
+--------------------------------------------------
+Decode Time (ms)               1590.996 ± 6.377
+Decode Time/token (ms)         159.100
+Decode Memory (GB)             14.712
+Decode Throughput (tok/s)      80.45
+--------------------------------------------------
+E2E Time (ms)                  1732.469 ± 3.473
+E2E Throughput (tok/s)         1256.01
+======================================================================
+
+
+[7/18] Testing config: bs8_pre128_dec1
+
+======================================================================
+Benchmarking: FP16
+  Batch size: 8
+  Prefill seq len: 128
+  Decode steps: 1
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (1 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                        DETAILED RESULTS: FP16                        
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              243.502 ± 0.115
+Prefill Memory (GB)            13.154
+Prefill Throughput (tok/s)     4205.30
+--------------------------------------------------
+Decode Time (ms)               188.044 ± 0.044
+Decode Time/token (ms)         18.804
+Decode Memory (GB)             13.625
+Decode Throughput (tok/s)      42.54
+--------------------------------------------------
+E2E Time (ms)                  267.855 ± 0.480
+E2E Throughput (tok/s)         3852.83
+======================================================================
+
+
+[8/18] Testing config: bs8_pre128_dec32
+
+======================================================================
+Benchmarking: FP16
+  Batch size: 8
+  Prefill seq len: 128
+  Decode steps: 32
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (32 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                        DETAILED RESULTS: FP16                        
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              243.487 ± 0.100
+Prefill Memory (GB)            13.154
+Prefill Throughput (tok/s)     4205.56
+--------------------------------------------------
+Decode Time (ms)               1432.463 ± 1.233
+Decode Time/token (ms)         143.246
+Decode Memory (GB)             13.808
+Decode Throughput (tok/s)      178.71
+--------------------------------------------------
+E2E Time (ms)                  1504.356 ± 16.641
+E2E Throughput (tok/s)         850.86
+======================================================================
+
+
+[9/18] Testing config: bs8_pre256_dec1
+
+======================================================================
+Benchmarking: FP16
+  Batch size: 8
+  Prefill seq len: 256
+  Decode steps: 1
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (1 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                        DETAILED RESULTS: FP16                        
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              450.305 ± 0.156
+Prefill Memory (GB)            13.749
+Prefill Throughput (tok/s)     4548.03
+--------------------------------------------------
+Decode Time (ms)               330.657 ± 0.038
+Decode Time/token (ms)         33.066
+Decode Memory (GB)             14.687
+Decode Throughput (tok/s)      24.19
+--------------------------------------------------
+E2E Time (ms)                  478.046 ± 0.599
+E2E Throughput (tok/s)         4300.84
+======================================================================
+
+
+[10/18] Testing config: bs8_pre256_dec32
+
+======================================================================
+Benchmarking: FP16
+  Batch size: 8
+  Prefill seq len: 256
+  Decode steps: 32
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (32 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                        DETAILED RESULTS: FP16                        
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              450.260 ± 0.046
+Prefill Memory (GB)            13.749
+Prefill Throughput (tok/s)     4548.48
+--------------------------------------------------
+Decode Time (ms)               1575.016 ± 4.122
+Decode Time/token (ms)         157.502
+Decode Memory (GB)             14.808
+Decode Throughput (tok/s)      162.54
+--------------------------------------------------
+E2E Time (ms)                  1719.896 ± 4.777
+E2E Throughput (tok/s)         1339.62
+======================================================================
+
+
+[11/18] Testing config: bs8_pre512_dec1
+
+======================================================================
+Benchmarking: FP16
+  Batch size: 8
+  Prefill seq len: 512
+  Decode steps: 1
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (1 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                        DETAILED RESULTS: FP16                        
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              835.491 ± 0.158
+Prefill Memory (GB)            14.936
+Prefill Throughput (tok/s)     4902.50
+--------------------------------------------------
+Decode Time (ms)               531.288 ± 1.383
+Decode Time/token (ms)         53.129
+Decode Memory (GB)             16.808
+Decode Throughput (tok/s)      15.06
+--------------------------------------------------
+E2E Time (ms)                  876.441 ± 0.594
+E2E Throughput (tok/s)         4682.57
+======================================================================
+
+
+[12/18] Testing config: bs8_pre512_dec32
+
+======================================================================
+Benchmarking: FP16
+  Batch size: 8
+  Prefill seq len: 512
+  Decode steps: 32
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (32 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                        DETAILED RESULTS: FP16                        
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              841.320 ± 0.096
+Prefill Memory (GB)            14.936
+Prefill Throughput (tok/s)     4868.54
+--------------------------------------------------
+Decode Time (ms)               1770.645 ± 3.019
+Decode Time/token (ms)         177.065
+Decode Memory (GB)             16.809
+Decode Throughput (tok/s)      144.58
+--------------------------------------------------
+E2E Time (ms)                  2117.921 ± 7.163
+E2E Throughput (tok/s)         2054.85
+======================================================================
+
+
+[13/18] Testing config: bs16_pre128_dec1
+
+======================================================================
+Benchmarking: FP16
+  Batch size: 16
+  Prefill seq len: 128
+  Decode steps: 1
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (1 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                        DETAILED RESULTS: FP16                        
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              452.428 ± 0.063
+Prefill Memory (GB)            13.749
+Prefill Throughput (tok/s)     4526.69
+--------------------------------------------------
+Decode Time (ms)               333.718 ± 0.047
+Decode Time/token (ms)         33.372
+Decode Memory (GB)             14.692
+Decode Throughput (tok/s)      47.94
+--------------------------------------------------
+E2E Time (ms)                  481.638 ± 0.354
+E2E Throughput (tok/s)         4285.37
+======================================================================
+
+
+[14/18] Testing config: bs16_pre128_dec32
+
+======================================================================
+Benchmarking: FP16
+  Batch size: 16
+  Prefill seq len: 128
+  Decode steps: 32
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (32 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                        DETAILED RESULTS: FP16                        
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              452.451 ± 0.052
+Prefill Memory (GB)            13.749
+Prefill Throughput (tok/s)     4526.46
+--------------------------------------------------
+Decode Time (ms)               1587.365 ± 4.064
+Decode Time/token (ms)         158.736
+Decode Memory (GB)             15.060
+Decode Throughput (tok/s)      322.55
+--------------------------------------------------
+E2E Time (ms)                  1733.108 ± 8.808
+E2E Throughput (tok/s)         1477.12
+======================================================================
+
+
+[15/18] Testing config: bs16_pre256_dec1
+
+======================================================================
+Benchmarking: FP16
+  Batch size: 16
+  Prefill seq len: 256
+  Decode steps: 1
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (1 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                        DETAILED RESULTS: FP16                        
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              839.194 ± 0.111
+Prefill Memory (GB)            14.936
+Prefill Throughput (tok/s)     4880.87
+--------------------------------------------------
+Decode Time (ms)               531.957 ± 0.051
+Decode Time/token (ms)         53.196
+Decode Memory (GB)             16.813
+Decode Throughput (tok/s)      30.08
+--------------------------------------------------
+E2E Time (ms)                  875.513 ± 0.618
+E2E Throughput (tok/s)         4696.68
+======================================================================
+
+
+[16/18] Testing config: bs16_pre256_dec32
+
+======================================================================
+Benchmarking: FP16
+  Batch size: 16
+  Prefill seq len: 256
+  Decode steps: 32
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (32 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                        DETAILED RESULTS: FP16                        
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              839.186 ± 0.121
+Prefill Memory (GB)            14.936
+Prefill Throughput (tok/s)     4880.92
+--------------------------------------------------
+Decode Time (ms)               1774.582 ± 6.586
+Decode Time/token (ms)         177.458
+Decode Memory (GB)             17.060
+Decode Throughput (tok/s)      288.52
+--------------------------------------------------
+E2E Time (ms)                  2118.856 ± 8.693
+E2E Throughput (tok/s)         2174.76
+======================================================================
+
+
+[17/18] Testing config: bs16_pre512_dec1
+
+======================================================================
+Benchmarking: FP16
+  Batch size: 16
+  Prefill seq len: 512
+  Decode steps: 1
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (1 steps)
+    Decode warmup (3 iterations)...
+✗ Config bs16_pre512_dec1 failed: CUDA out of memory. Tried to allocate 66.00 MiB. GPU 0 has a total capacity of 23.69 GiB of which 32.94 MiB is free. Including non-PyTorch memory, this process has 23.66 GiB memory in use. Of the allocated memory 20.43 GiB is allocated by PyTorch, and 1.89 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+[18/18] Testing config: bs16_pre512_dec32
+
+======================================================================
+Benchmarking: FP16
+  Batch size: 16
+  Prefill seq len: 512
+  Decode steps: 32
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (32 steps)
+    Decode warmup (3 iterations)...
+✗ Config bs16_pre512_dec32 failed: CUDA out of memory. Tried to allocate 66.00 MiB. GPU 0 has a total capacity of 23.69 GiB of which 32.94 MiB is free. Including non-PyTorch memory, this process has 23.66 GiB memory in use. Of the allocated memory 20.43 GiB is allocated by PyTorch, and 1.89 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+⚠ FP16: 2/18 configs failed: ['bs16_pre512_dec1', 'bs16_pre512_dec32']
+
+======================================================================
+=======================LOADING QUANTIZED MODEL========================
+======================================================================
+  Loading quantized model from ./flh-model/llama2-7b/...
+Loading quantized model from ./flh-model/llama2-7b/ (FP16 format)...
+  Quantization config: W4G128_sym / A4G128_sym
+  Loading model weights to CPU...
+  Creating model structure...
+  Replacing with FLH components...
+  Loading weights to model (on CPU)...
+  Moving complete model to cuda...
+  ✓ All modules moved to cuda
+✓ Model loaded successfully on cuda (FP16)
+✓ Quantized model loaded successfully
+  Model size: 0.49 GB
+
+[1/18] Testing config: bs4_pre128_dec1
+
+======================================================================
+Benchmarking: FLH-Quantized
+  Batch size: 4
+  Prefill seq len: 128
+  Decode steps: 1
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (1 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                   DETAILED RESULTS: FLH-Quantized                    
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              55.568 ± 0.111
+Prefill Memory (GB)            3.749
+Prefill Throughput (tok/s)     9213.98
+--------------------------------------------------
+Decode Time (ms)               42.427 ± 1.216
+Decode Time/token (ms)         4.243
+Decode Memory (GB)             4.234
+Decode Throughput (tok/s)      94.28
+--------------------------------------------------
+E2E Time (ms)                  84.821 ± 2.207
+E2E Throughput (tok/s)         6083.39
+======================================================================
+
+
+[2/18] Testing config: bs4_pre128_dec32
+
+======================================================================
+Benchmarking: FLH-Quantized
+  Batch size: 4
+  Prefill seq len: 128
+  Decode steps: 32
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (32 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                   DETAILED RESULTS: FLH-Quantized                    
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              55.836 ± 0.076
+Prefill Memory (GB)            3.749
+Prefill Throughput (tok/s)     9169.77
+--------------------------------------------------
+Decode Time (ms)               1337.383 ± 3.691
+Decode Time/token (ms)         133.738
+Decode Memory (GB)             4.326
+Decode Throughput (tok/s)      95.71
+--------------------------------------------------
+E2E Time (ms)                  1382.008 ± 5.616
+E2E Throughput (tok/s)         463.09
+======================================================================
+
+
+[3/18] Testing config: bs4_pre256_dec1
+
+======================================================================
+Benchmarking: FLH-Quantized
+  Batch size: 4
+  Prefill seq len: 256
+  Decode steps: 1
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (1 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                   DETAILED RESULTS: FLH-Quantized                    
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              106.858 ± 0.612
+Prefill Memory (GB)            3.798
+Prefill Throughput (tok/s)     9582.80
+--------------------------------------------------
+Decode Time (ms)               86.679 ± 2.181
+Decode Time/token (ms)         8.668
+Decode Memory (GB)             4.764
+Decode Throughput (tok/s)      46.15
+--------------------------------------------------
+E2E Time (ms)                  129.844 ± 0.465
+E2E Throughput (tok/s)         7917.20
+======================================================================
+
+
+[4/18] Testing config: bs4_pre256_dec32
+
+======================================================================
+Benchmarking: FLH-Quantized
+  Batch size: 4
+  Prefill seq len: 256
+  Decode steps: 32
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (32 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                   DETAILED RESULTS: FLH-Quantized                    
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              107.110 ± 0.697
+Prefill Memory (GB)            3.798
+Prefill Throughput (tok/s)     9560.24
+--------------------------------------------------
+Decode Time (ms)               1377.919 ± 2.973
+Decode Time/token (ms)         137.792
+Decode Memory (GB)             4.824
+Decode Throughput (tok/s)      92.89
+--------------------------------------------------
+E2E Time (ms)                  1420.967 ± 5.410
+E2E Throughput (tok/s)         810.72
+======================================================================
+
+
+[5/18] Testing config: bs4_pre512_dec1
+
+======================================================================
+Benchmarking: FLH-Quantized
+  Batch size: 4
+  Prefill seq len: 512
+  Decode steps: 1
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (1 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                   DETAILED RESULTS: FLH-Quantized                    
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              200.044 ± 1.512
+Prefill Memory (GB)            3.894
+Prefill Throughput (tok/s)     10237.75
+--------------------------------------------------
+Decode Time (ms)               147.458 ± 0.327
+Decode Time/token (ms)         14.746
+Decode Memory (GB)             5.826
+Decode Throughput (tok/s)      27.13
+--------------------------------------------------
+E2E Time (ms)                  227.141 ± 0.647
+E2E Throughput (tok/s)         9034.03
+======================================================================
+
+
+[6/18] Testing config: bs4_pre512_dec32
+
+======================================================================
+Benchmarking: FLH-Quantized
+  Batch size: 4
+  Prefill seq len: 512
+  Decode steps: 32
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (32 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                   DETAILED RESULTS: FLH-Quantized                    
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              201.226 ± 1.584
+Prefill Memory (GB)            3.894
+Prefill Throughput (tok/s)     10177.60
+--------------------------------------------------
+Decode Time (ms)               1443.790 ± 2.314
+Decode Time/token (ms)         144.379
+Decode Memory (GB)             5.854
+Decode Throughput (tok/s)      88.66
+--------------------------------------------------
+E2E Time (ms)                  1523.416 ± 2.623
+E2E Throughput (tok/s)         1428.37
+======================================================================
+
+
+[7/18] Testing config: bs8_pre128_dec1
+
+======================================================================
+Benchmarking: FLH-Quantized
+  Batch size: 8
+  Prefill seq len: 128
+  Decode steps: 1
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (1 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                   DETAILED RESULTS: FLH-Quantized                    
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              107.151 ± 0.472
+Prefill Memory (GB)            3.798
+Prefill Throughput (tok/s)     9556.61
+--------------------------------------------------
+Decode Time (ms)               87.664 ± 2.294
+Decode Time/token (ms)         8.766
+Decode Memory (GB)             4.766
+Decode Throughput (tok/s)      91.26
+--------------------------------------------------
+E2E Time (ms)                  130.610 ± 0.140
+E2E Throughput (tok/s)         7901.41
+======================================================================
+
+
+[8/18] Testing config: bs8_pre128_dec32
+
+======================================================================
+Benchmarking: FLH-Quantized
+  Batch size: 8
+  Prefill seq len: 128
+  Decode steps: 32
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (32 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                   DETAILED RESULTS: FLH-Quantized                    
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              107.250 ± 0.463
+Prefill Memory (GB)            3.798
+Prefill Throughput (tok/s)     9547.77
+--------------------------------------------------
+Decode Time (ms)               1434.626 ± 80.571
+Decode Time/token (ms)         143.463
+Decode Memory (GB)             4.950
+Decode Throughput (tok/s)      178.44
+--------------------------------------------------
+E2E Time (ms)                  1443.933 ± 8.949
+E2E Throughput (tok/s)         886.47
+======================================================================
+
+
+[9/18] Testing config: bs8_pre256_dec1
+
+======================================================================
+Benchmarking: FLH-Quantized
+  Batch size: 8
+  Prefill seq len: 256
+  Decode steps: 1
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (1 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                   DETAILED RESULTS: FLH-Quantized                    
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              199.364 ± 1.269
+Prefill Memory (GB)            3.894
+Prefill Throughput (tok/s)     10272.64
+--------------------------------------------------
+Decode Time (ms)               147.958 ± 0.354
+Decode Time/token (ms)         14.796
+Decode Memory (GB)             5.828
+Decode Throughput (tok/s)      54.07
+--------------------------------------------------
+E2E Time (ms)                  226.738 ± 0.342
+E2E Throughput (tok/s)         9067.75
+======================================================================
+
+
+[10/18] Testing config: bs8_pre256_dec32
+
+======================================================================
+Benchmarking: FLH-Quantized
+  Batch size: 8
+  Prefill seq len: 256
+  Decode steps: 32
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (32 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                   DETAILED RESULTS: FLH-Quantized                    
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              199.661 ± 0.747
+Prefill Memory (GB)            3.894
+Prefill Throughput (tok/s)     10257.41
+--------------------------------------------------
+Decode Time (ms)               1452.297 ± 6.079
+Decode Time/token (ms)         145.230
+Decode Memory (GB)             5.950
+Decode Throughput (tok/s)      176.27
+--------------------------------------------------
+E2E Time (ms)                  1527.284 ± 5.230
+E2E Throughput (tok/s)         1508.56
+======================================================================
+
+
+[11/18] Testing config: bs8_pre512_dec1
+
+======================================================================
+Benchmarking: FLH-Quantized
+  Batch size: 8
+  Prefill seq len: 512
+  Decode steps: 1
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (1 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                   DETAILED RESULTS: FLH-Quantized                    
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              389.669 ± 1.926
+Prefill Memory (GB)            4.086
+Prefill Throughput (tok/s)     10511.49
+--------------------------------------------------
+Decode Time (ms)               270.021 ± 0.440
+Decode Time/token (ms)         27.002
+Decode Memory (GB)             7.949
+Decode Throughput (tok/s)      29.63
+--------------------------------------------------
+E2E Time (ms)                  424.902 ± 1.490
+E2E Throughput (tok/s)         9658.69
+======================================================================
+
+
+[12/18] Testing config: bs8_pre512_dec32
+
+======================================================================
+Benchmarking: FLH-Quantized
+  Batch size: 8
+  Prefill seq len: 512
+  Decode steps: 32
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (32 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                   DETAILED RESULTS: FLH-Quantized                    
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              390.883 ± 1.825
+Prefill Memory (GB)            4.086
+Prefill Throughput (tok/s)     10478.83
+--------------------------------------------------
+Decode Time (ms)               1576.576 ± 10.255
+Decode Time/token (ms)         157.658
+Decode Memory (GB)             7.950
+Decode Throughput (tok/s)      162.38
+--------------------------------------------------
+E2E Time (ms)                  1727.937 ± 8.840
+E2E Throughput (tok/s)         2518.61
+======================================================================
+
+
+[13/18] Testing config: bs16_pre128_dec1
+
+======================================================================
+Benchmarking: FLH-Quantized
+  Batch size: 16
+  Prefill seq len: 128
+  Decode steps: 1
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (1 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                   DETAILED RESULTS: FLH-Quantized                    
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              199.596 ± 1.391
+Prefill Memory (GB)            3.894
+Prefill Throughput (tok/s)     10260.71
+--------------------------------------------------
+Decode Time (ms)               148.586 ± 0.386
+Decode Time/token (ms)         14.859
+Decode Memory (GB)             5.833
+Decode Throughput (tok/s)      107.68
+--------------------------------------------------
+E2E Time (ms)                  227.176 ± 0.669
+E2E Throughput (tok/s)         9085.48
+======================================================================
+
+
+[14/18] Testing config: bs16_pre128_dec32
+
+======================================================================
+Benchmarking: FLH-Quantized
+  Batch size: 16
+  Prefill seq len: 128
+  Decode steps: 32
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (32 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                   DETAILED RESULTS: FLH-Quantized                    
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              199.535 ± 1.340
+Prefill Memory (GB)            3.894
+Prefill Throughput (tok/s)     10263.88
+--------------------------------------------------
+Decode Time (ms)               1457.487 ± 6.347
+Decode Time/token (ms)         145.749
+Decode Memory (GB)             6.201
+Decode Throughput (tok/s)      351.29
+--------------------------------------------------
+E2E Time (ms)                  1543.564 ± 37.448
+E2E Throughput (tok/s)         1658.50
+======================================================================
+
+
+[15/18] Testing config: bs16_pre256_dec1
+
+======================================================================
+Benchmarking: FLH-Quantized
+  Batch size: 16
+  Prefill seq len: 256
+  Decode steps: 1
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (1 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                   DETAILED RESULTS: FLH-Quantized                    
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              387.499 ± 2.393
+Prefill Memory (GB)            4.086
+Prefill Throughput (tok/s)     10570.34
+--------------------------------------------------
+Decode Time (ms)               269.000 ± 0.500
+Decode Time/token (ms)         26.900
+Decode Memory (GB)             7.954
+Decode Throughput (tok/s)      59.48
+--------------------------------------------------
+E2E Time (ms)                  422.934 ± 1.860
+E2E Throughput (tok/s)         9722.56
+======================================================================
+
+
+[16/18] Testing config: bs16_pre256_dec32
+
+======================================================================
+Benchmarking: FLH-Quantized
+  Batch size: 16
+  Prefill seq len: 256
+  Decode steps: 32
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (32 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                   DETAILED RESULTS: FLH-Quantized                    
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              388.080 ± 2.203
+Prefill Memory (GB)            4.086
+Prefill Throughput (tok/s)     10554.52
+--------------------------------------------------
+Decode Time (ms)               1552.765 ± 5.699
+Decode Time/token (ms)         155.276
+Decode Memory (GB)             8.202
+Decode Throughput (tok/s)      329.73
+--------------------------------------------------
+E2E Time (ms)                  1703.250 ± 6.837
+E2E Throughput (tok/s)         2705.42
+======================================================================
+
+
+[17/18] Testing config: bs16_pre512_dec1
+
+======================================================================
+Benchmarking: FLH-Quantized
+  Batch size: 16
+  Prefill seq len: 512
+  Decode steps: 1
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (1 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                   DETAILED RESULTS: FLH-Quantized                    
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              768.419 ± 1.709
+Prefill Memory (GB)            4.471
+Prefill Throughput (tok/s)     10660.85
+--------------------------------------------------
+Decode Time (ms)               512.978 ± 1.190
+Decode Time/token (ms)         51.298
+Decode Memory (GB)             12.198
+Decode Throughput (tok/s)      31.19
+--------------------------------------------------
+E2E Time (ms)                  818.227 ± 1.345
+E2E Throughput (tok/s)         10031.45
+======================================================================
+
+
+[18/18] Testing config: bs16_pre512_dec32
+
+======================================================================
+Benchmarking: FLH-Quantized
+  Batch size: 16
+  Prefill seq len: 512
+  Decode steps: 32
+======================================================================
+
+[1/3] Prefill Phase
+    Prefill warmup (3 iterations)...
+    Prefill benchmark (10 iterations)...
+
+[2/3] Decode Phase (32 steps)
+    Decode warmup (3 iterations)...
+    Decode benchmark (10 iterations)...
+
+[3/3] End-to-End (Prefill + Decode)
+    E2E warmup (3 iterations)...
+    E2E benchmark (10 iterations)...
+
+======================================================================
+                   DETAILED RESULTS: FLH-Quantized                    
+======================================================================
+
+Metric                         Value               
+--------------------------------------------------
+Prefill Time (ms)              769.643 ± 1.827
+Prefill Memory (GB)            4.471
+Prefill Throughput (tok/s)     10643.89
+--------------------------------------------------
+Decode Time (ms)               1817.097 ± 2.208
+Decode Time/token (ms)         181.710
+Decode Memory (GB)             12.201
+Decode Throughput (tok/s)      281.77
+--------------------------------------------------
+E2E Time (ms)                  2122.696 ± 0.575
+E2E Throughput (tok/s)         4100.45
+======================================================================
+
+
+======================================================================
+==========================BENCHMARK SUMMARY===========================
+======================================================================
+  FP16 configs passed: 16/18
+  Quantized configs passed: 18/18
+  FP16 failed: ['bs16_pre512_dec1', 'bs16_pre512_dec32']
+
+====================================================================================================
+                                      MODEL COMPARISON RESULTS                                      
+====================================================================================================
+
+Config                    Model      Prefill (ms)    Decode (ms)     E2E (ms)        Mem (GB)   Speedup   
+----------------------------------------------------------------------------------------------------
+bs4_pre128_dec1           FP16       153.75          109.65          153.75          12.97      -         
+bs4_pre128_dec1           FLH-Q      84.82           42.43           84.82           3.99       1.81x     
+----------------------------------------------------------------------------------------------------
+bs4_pre128_dec32          FP16       1400.45         1361.74         1400.45         13.02      -         
+bs4_pre128_dec32          FLH-Q      1382.01         1337.38         1382.01         4.04       1.01x     
+----------------------------------------------------------------------------------------------------
+bs4_pre256_dec1           FP16       266.61          187.09          266.61          13.39      -         
+bs4_pre256_dec1           FLH-Q      129.84          86.68           129.84          4.28       2.05x     
+----------------------------------------------------------------------------------------------------
+bs4_pre256_dec32          FP16       1519.75         1437.39         1519.75         13.42      -         
+bs4_pre256_dec32          FLH-Q      1420.97         1377.92         1420.97         4.31       1.07x     
+----------------------------------------------------------------------------------------------------
+bs4_pre512_dec1           FP16       478.47          330.70          478.47          14.22      -         
+bs4_pre512_dec1           FLH-Q      227.14          147.46          227.14          4.86       2.11x     
+----------------------------------------------------------------------------------------------------
+bs4_pre512_dec32          FP16       1732.47         1591.00         1732.47         14.23      -         
+bs4_pre512_dec32          FLH-Q      1523.42         1443.79         1523.42         4.87       1.14x     
+----------------------------------------------------------------------------------------------------
+bs8_pre128_dec1           FP16       267.86          188.04          267.86          13.39      -         
+bs8_pre128_dec1           FLH-Q      130.61          87.66           130.61          4.28       2.05x     
+----------------------------------------------------------------------------------------------------
+bs8_pre128_dec32          FP16       1504.36         1432.46         1504.36         13.48      -         
+bs8_pre128_dec32          FLH-Q      1443.93         1434.63         1443.93         4.37       1.04x     
+----------------------------------------------------------------------------------------------------
+bs8_pre256_dec1           FP16       478.05          330.66          478.05          14.22      -         
+bs8_pre256_dec1           FLH-Q      226.74          147.96          226.74          4.86       2.11x     
+----------------------------------------------------------------------------------------------------
+bs8_pre256_dec32          FP16       1719.90         1575.02         1719.90         14.28      -         
+bs8_pre256_dec32          FLH-Q      1527.28         1452.30         1527.28         4.92       1.13x     
+----------------------------------------------------------------------------------------------------
+bs8_pre512_dec1           FP16       876.44          531.29          876.44          15.87      -         
+bs8_pre512_dec1           FLH-Q      424.90          270.02          424.90          6.02       2.06x     
+----------------------------------------------------------------------------------------------------
+bs8_pre512_dec32          FP16       2117.92         1770.65         2117.92         15.87      -         
+bs8_pre512_dec32          FLH-Q      1727.94         1576.58         1727.94         6.02       1.23x     
+----------------------------------------------------------------------------------------------------
+bs16_pre128_dec1          FP16       481.64          333.72          481.64          14.22      -         
+bs16_pre128_dec1          FLH-Q      227.18          148.59          227.18          4.86       2.12x     
+----------------------------------------------------------------------------------------------------
+bs16_pre128_dec32         FP16       1733.11         1587.36         1733.11         14.40      -         
+bs16_pre128_dec32         FLH-Q      1543.56         1457.49         1543.56         5.05       1.12x     
+----------------------------------------------------------------------------------------------------
+bs16_pre256_dec1          FP16       875.51          531.96          875.51          15.87      -         
+bs16_pre256_dec1          FLH-Q      422.93          269.00          422.93          6.02       2.07x     
+----------------------------------------------------------------------------------------------------
+bs16_pre256_dec32         FP16       2118.86         1774.58         2118.86         16.00      -         
+bs16_pre256_dec32         FLH-Q      1703.25         1552.76         1703.25         6.14       1.24x     
+----------------------------------------------------------------------------------------------------
+
+====================================================================================================
+
+======================================================================
+                          LATEX TABLE FORMAT                          
+======================================================================
+
+% Comparison table: Batch Size, Prefill, Decode, FP16-E2E, FP16-Mem, Quant-E2E, Quant-Mem, Speedup
+\begin{table}[h]
+\centering
+\begin{tabular}{|l|c|c|c|c|c|c|c|}
+\hline
+Config & BS & Prefill & Decode & FP16 E2E (ms) & Quant E2E (ms) & Memory Saved & Speedup \\
+\hline
+bs4_pre128_dec1 & 4 & 128 & 1 & 153.75 & 84.82 & 8.98GB & 1.81x \\
+bs4_pre128_dec32 & 4 & 128 & 32 & 1400.45 & 1382.01 & 8.98GB & 1.01x \\
+bs4_pre256_dec1 & 4 & 256 & 1 & 266.61 & 129.84 & 9.11GB & 2.05x \\
+bs4_pre256_dec32 & 4 & 256 & 32 & 1519.75 & 1420.97 & 9.11GB & 1.07x \\
+bs4_pre512_dec1 & 4 & 512 & 1 & 478.47 & 227.14 & 9.36GB & 2.11x \\
+bs4_pre512_dec32 & 4 & 512 & 32 & 1732.47 & 1523.42 & 9.36GB & 1.14x \\
+bs8_pre128_dec1 & 8 & 128 & 1 & 267.86 & 130.61 & 9.11GB & 2.05x \\
+bs8_pre128_dec32 & 8 & 128 & 32 & 1504.36 & 1443.93 & 9.11GB & 1.04x \\
+bs8_pre256_dec1 & 8 & 256 & 1 & 478.05 & 226.74 & 9.36GB & 2.11x \\
+bs8_pre256_dec32 & 8 & 256 & 32 & 1719.90 & 1527.28 & 9.36GB & 1.13x \\
+bs8_pre512_dec1 & 8 & 512 & 1 & 876.44 & 424.90 & 9.85GB & 2.06x \\
+bs8_pre512_dec32 & 8 & 512 & 32 & 2117.92 & 1727.94 & 9.85GB & 1.23x \\
+bs16_pre128_dec1 & 16 & 128 & 1 & 481.64 & 227.18 & 9.36GB & 2.12x \\
+bs16_pre128_dec32 & 16 & 128 & 32 & 1733.11 & 1543.56 & 9.36GB & 1.12x \\
+bs16_pre256_dec1 & 16 & 256 & 1 & 875.51 & 422.93 & 9.85GB & 2.07x \\
+bs16_pre256_dec32 & 16 & 256 & 32 & 2118.86 & 1703.25 & 9.85GB & 1.24x \\
+\hline
+\end{tabular}
+\caption{FLH Quantized Model vs FP16 Model Performance Comparison}
+\end{table}
+
+======================================================================
+Benchmark completed!
+======================================================================
+

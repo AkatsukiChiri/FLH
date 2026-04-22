@@ -300,7 +300,7 @@ static torch::Tensor gemm_i4_dequant_o16_gs(
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("gemm_i4_dequant_o16", &gemm_i4_dequant_o16, "int4 GEMM with sync dequant (fp16 out)");
-  m.def("hadamard_transform_128_half", &hadamard_transform_128_half, "In-place Hadamard transform for (M, 128) half matrix");
+  m.def("hadamard_transform_half", &hadamard_transform_128_half, "In-place Hadamard transform for (M, 128) half matrix");
   m.def("hadamard_transform_64_half", &hadamard_transform_64_half, "In-place Hadamard transform for (M, 64) half matrix");
   m.def("hadamard_transform_32_half", &hadamard_transform_32_half, "In-place Hadamard transform for (M, 32) half matrix");
   m.def("hadamard_and_quantize_i4", &hadamard_and_quantize_i4, "Fused Hadamard transform + int4 quantization (returns packed uint8 and scales)");

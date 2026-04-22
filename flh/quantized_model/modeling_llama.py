@@ -316,7 +316,7 @@ class FLH_LlamaAttention(FLH_FP16LlamaAttention):
         # 第一个量化器：仅量化，不进行 Hadamard 变换
         self.quantizer1 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=False, packed_output=True)
         # 第二个量化器：既量化又进行 Hadamard 变换
-        self.quantizer2 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=True, packed_output=True)
+        self.quantizer2 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=False, packed_output=True)
         
         # 在 init 时将 q/k/v Linear 层替换为 LinearFLH（用于 save/load_quantized）
         # o_proj 单独创建，因为它使用双侧 Hadamard
@@ -477,7 +477,7 @@ class FLH_LlamaMLP(LlamaMLP):
         # 第一个量化器：仅量化，不进行 Hadamard 变换
         self.quantizer1 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=False, packed_output=True)
         # 第二个量化器：既量化又进行 Hadamard 变换
-        self.quantizer2 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=True, packed_output=True)
+        self.quantizer2 = flh.nn.ActQuantizer(bits=act_bits, group_size=act_group_size, sym=act_sym, use_hadamard=False, packed_output=True)
         
         # 在 init 时将 Linear 层替换为 LinearFLH（用于 save/load_quantized）
         device = self.gate_proj.weight.device
